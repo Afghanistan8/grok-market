@@ -12,7 +12,7 @@ from datetime import date
 from pathlib import Path
 
 import pytest
-from gltest.direct import VMContext, create_address, deploy_contract
+from gltest.direct import VMContext, create_address, deploy_contract, load_contract_class
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT = ROOT / "contracts" / "GrokMarket.py"
@@ -22,6 +22,7 @@ DAY = 86400
 HOUR = 3600
 GMT_PLUS_ONE = 3600
 PRICE_SCALE = 10**8
+MAX_PAGE = 50
 
 EPOCH_ORDINAL = date(1970, 1, 1).toordinal()
 
@@ -236,3 +237,50 @@ def market(vm):
         contract = deploy_contract(CONTRACT, vm)
         vm.deal(vm._contract_address, 10_000 * GEN)
         yield contract
+
+
+@pytest.fixture
+def gm(vm):
+    """The contract module itself, for testing its pure helpers directly."""
+    with vm.activate():
+        load_contract_class(CONTRACT, vm)
+        yield sys.modules["_contract_GrokMarket"]
+
+
+def record_transfers(vm):
+    """Capture every native value transfer the contract emits.
+
+    Direct mode has no EthSend handler, so unhandled gl_calls fall through to
+    this hook. Returning None lets the call complete as a no-op.
+    """
+    sent = []
+
+    def hook(_vm, request):
+        if "EthSend" in request:
+            sent.append(request["EthSend"])
+        return None
+
+    vm._gl_call_hook = hook
+    return sent
+
+
+def fail_transfers(vm, message: str = "recipient rejected the transfer"):
+    """Make every native value transfer raise, as a failing send would."""
+
+    def hook(_vm, request):
+        if "EthSend" in request:
+            raise RuntimeError(message)
+        return None
+
+    vm._gl_call_hook = hook
+
+
+def revert_message(exc: BaseException) -> str:
+    return getattr(exc, "message", None) or str(exc)
+
+
+def assert_reverts(excinfo, prefix: str, fragment: str = "") -> None:
+    message = revert_message(excinfo.value)
+    assert prefix in message, "expected %s, got %r" % (prefix, message)
+    if fragment:
+        assert fragment in message, "expected %r in %r" % (fragment, message)
