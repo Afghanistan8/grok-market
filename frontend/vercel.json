@@ -1,0 +1,8 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "rewrites": [
+    { "source": "/binance/:path*", "destination": "https://data-api.binance.vision/:path*" },
+    { "source": "/stocks/:path*", "destination": "https://stockanalysis.com/:path*" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}

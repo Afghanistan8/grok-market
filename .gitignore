@@ -8,3 +8,5 @@ node_modules/
 dist/
 .vite/
 .DS_Store
+frontend/dist/
+frontend/node_modules/
