@@ -1,0 +1,22 @@
+# gltest configuration for Grok-Market.
+#
+# The direct-mode suite (tests/direct, tests/consensus) never touches a network:
+# it loads the real py-genlayer runner named in the contract header and runs the
+# contract in-process. These entries only matter for `gltest` runs against a live
+# node, selected with `--network testnet_bradbury`.
+#
+# Bradbury must be reached through the GenLayer RPC host below. The zkSync-OS
+# ChainList host rate limits eth_sendRawTransaction with error -32005.
+networks:
+  default: localnet
+
+  testnet_bradbury:
+    url: https://rpc-bradbury.genlayer.com
+    id: 4221
+  localnet:
+    url: http://127.0.0.1:4000/api
+    id: 61127
+
+paths:
+  contracts: contracts
+  artifacts: artifacts

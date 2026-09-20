@@ -1,0 +1,7 @@
+-r requirements.txt
+
+# Direct-mode testing. gltest downloads the real py-genlayer runner named in
+# the contract header, so tests execute against the production SDK rather than
+# a hand written stand-in.
+genlayer-test==0.29.2
+pytest==8.3.4

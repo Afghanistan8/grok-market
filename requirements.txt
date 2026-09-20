@@ -1,0 +1,4 @@
+# Runtime tooling for deploying and interacting with Grok-Market.
+# The Intelligent Contract itself runs inside GenVM and pulls its SDK from the
+# runner named in the contract header, so it has no pip dependencies.
+genlayer-py==0.16.3

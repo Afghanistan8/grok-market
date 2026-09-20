@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+artifacts/
+.env
+.env.local
+node_modules/
+dist/
+.vite/
+.DS_Store
