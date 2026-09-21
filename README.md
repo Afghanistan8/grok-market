@@ -15,14 +15,51 @@ There is no owner, no pause switch, no admin resolve and no upgrade hook.
 
 ---
 
+## Live
+
+| | |
+|---|---|
+| App | [grok-market-theta.vercel.app](https://grok-market-theta.vercel.app) |
+| Contract | `0x7b5701387e5154D1942cd2cE3B39cA51b39a39FF` |
+| Network | GenLayer Studio Network (studionet) |
+| Chain ID | 61999 |
+| RPC | `https://studio.genlayer.com/api` |
+| Faucet | built into [studio.genlayer.com](https://studio.genlayer.com) |
+
+The frontend is locked to studionet. The chain, RPC and contract address are
+fixed in `frontend/src/lib/env.ts`, so it needs no environment variables to
+build or deploy.
+
+### What has been verified on the live network
+
+Every item below was run against real studionet validators, not simulated:
+
+| Path | Result |
+|---|---|
+| Deploy, views | contract deploys; `get_supported_universe` and `get_stats` return the locked catalog |
+| `create_market`, all four kinds | crypto and stock, direction and relative-return, created through genlayer-js |
+| Weekend stock market | rejected: `EXPECTED: stock markets cannot target a Saturday or Sunday` |
+| `take_position` with 2 GEN | position and pool recorded, GEN held by the contract |
+| Rejected stake (side switch, over cap) | returns `REFUNDED:<reason>`; the GEN comes back to the wallet in a transfer after finality |
+| Resolution fetch, crypto direction | Coinbase + Binance, `MAJORITY_AGREE` |
+| Resolution fetch, crypto relative-return | 8 live requests per validator, `MAJORITY_AGREE` |
+| Resolution fetch, stock direction and relative-return | stockanalysis + Nasdaq, `MAJORITY_AGREE`, prices identical to the cent |
+| Browser-wallet write path | a MetaMask-style EIP-1193 wallet (gas estimate, sign, broadcast) created a market and staked |
+
+The resolution fetch was exercised on a throwaway copy of the contract with one
+extra test method, because a real market cannot be resolved until its GMT+1 day
+has ended. The copy runs the same `fetch_payload` and `parse_agreed` code.
+
+---
+
 ## What you can bet on
 
 Two categories, four assets each:
 
 | Category | Assets | Source A | Source B |
 |---|---|---|---|
-| **CRYPTO** | BTC, ETH, SOL, XRP | CoinGecko | Binance 1h klines |
-| **STOCKS** | AAPL, MSFT, NVDA, TSLA | stockanalysis.com | Nasdaq |
+| **CRYPTO** | BTC, ETH, SOL, XRP | Coinbase Exchange hourly candles | Binance hourly klines |
+| **STOCKS** | AAPL, MSFT, NVDA, TSLA | stockanalysis.com daily history | Nasdaq daily history |
 
 Two market kinds, both settling on one **GMT+1 calendar day**:
 
@@ -31,16 +68,14 @@ Two market kinds, both settling on one **GMT+1 calendar day**:
 - **Kind B — daily relative return.** Pick which of the four assets in a
   category posts the strongest percentage return over that GMT+1 day.
 
-Stakes are **2–6 GEN** per wallet per market. You can top up your side; you
-cannot switch sides.
+Stock markets cannot target a Saturday or Sunday, since there is no session to
+settle on. Holidays are not known to the contract; a holiday market simply
+cannot resolve and refunds everyone after five days.
 
-> **On hourly markets.** An earlier draft of this spec had Kind B running on a
-> single GMT+1 *hour*. That was dropped after probing the feeds live: there is
-> no pair of independent, keyless, intraday stock feeds that a contract can rely
-> on. Yahoo hard rate-limits under the request volume that independent validators
-> generate, and everything else requires an API key, which cannot live in a
-> public contract. Daily data is solid from two independent sources for both
-> categories, so every shipped market type keeps the two-source guarantee.
+Stakes are **2–6 GEN** per wallet per market. You can top up your side; you
+cannot switch sides. A stake the contract cannot accept (over the cap, wrong
+side, sent after the cutoff) is **refunded in the same transaction** rather than
+reverted — see "Why rejected stakes refund" below.
 
 ---
 
@@ -69,67 +104,46 @@ If a feed is unreachable, resolution reverts and the market stays retryable.
 Five days after the day closed, `resolve_market` stops asking the web anything
 at all and refunds every stake. It never invents a price.
 
+GEN sent out by the contract (claims and refunds) arrives as its own
+transaction once the triggering transaction finalizes, typically within a
+minute or two.
+
 ---
 
-## Live deployment
+## Findings that shaped the design
 
-| | |
-|---|---|
-| App | [grok-market-swart.vercel.app](https://grok-market-swart.vercel.app) |
-| Contract | `0x1f774eb175CD0A1E82AB61422Fa231AD1bAC6742` |
-| Network | GenLayer Studio Network (studionet) |
-| Chain ID | 61999 |
-| RPC | `https://studio.genlayer.com/api` |
+These came from testing against live data and live validators. Each one is
+covered by a regression test.
 
-Verified live after deploy: `get_stats` and `get_supported_universe` return the
-locked catalog, and `create_market` wrote market #1 (BTC, GMT+1 day 2026-09-22)
-with `cutoff_at` exactly `day_index * 86400 - 3600`.
+**CoinGecko was replaced by Coinbase.** CoinGecko rate-limits the public API
+after a handful of requests. On studionet the validators share an outbound IP,
+and a real resolution failed with `TRANSIENT: source http 429`. Coinbase
+answered 25 back-to-back requests without a single 429. Coinbase is also a
+single venue with hourly candles, so it measures exactly the same two instants
+as Binance.
 
-The frontend is locked to studionet: the chain, RPC and contract address are
-built in, so it needs no environment variables to build or deploy.
+**Both crypto sources measure the same instants.** An earlier version compared
+CoinGecko's last sample *before* the day ended (23 hours) with Binance's close
+at the end of the day (24 hours). On 2026-09-20 that split ETH and SOL against
+Binance on live data. Both sources now report the price at the window start and
+the price at the window end.
 
-### Why studionet and not Bradbury
+**Why rejected stakes refund.** GEN attached to a call is credited to the
+contract even when the call reverts: a side-switch stake on the first deploy
+left 2 GEN in the contract with no position to claim it by. So `take_position`
+never reverts once value is attached. It checks every rule first, and either
+records the position (`STAKED:<total wei>`) or sends the GEN back
+(`REFUNDED:<reason>`). A call carrying no value still reverts normally.
 
-Both other environments were tried first and are currently unusable for this:
-
-- **studio-dev / studio-next** (chain 61997) executes nothing. A 13-line control
-  contract fails there with `invalid_contract runner absent` under every runner
-  alias (`test`, `latest`, and the pinned hash), and so does GenLayer's own
-  documentation example. The docs note this RC environment's availability is not
-  guaranteed.
-- **Bradbury** (chain 4221) rejects the deploy at the L2 layer: `eth_estimateGas`
-  reverts, the CLI falls back to a hard-coded 200 000 gas, and a 54 KB contract
-  needs roughly 870 000 gas of calldata alone, so it fails `intrinsic gas too
-  low`. A 289-byte control contract fails the same way, so this is not a size
-  limit on our side.
+**Why studionet.** studio-dev (chain 61997) currently executes no Python
+contract at all: a 13-line control contract and GenLayer's own documentation
+example both fail with `invalid_contract runner absent`. Bradbury (chain 4221)
+rejects deploys at `eth_estimateGas`, including for a 289-byte control contract,
+so the CLI falls back to 200 000 gas and fails `intrinsic gas too low`.
 
 Use the **stable** `genlayer` CLI for studionet. The `0.40.0-rc` CLI sends
-consensus-v0.6-shaped transactions that studionet answers with `NO_MAJORITY` and
-zero votes committed.
-
-## Network reference
-
-| Setting | Value |
-|---|---|
-| Network | GenLayer Testnet Bradbury |
-| Chain ID | 4221 |
-| RPC | `https://rpc-bradbury.genlayer.com` |
-| Explorer | [explorer-bradbury.genlayer.com](https://explorer-bradbury.genlayer.com) |
-| Faucet | [testnet-faucet.genlayer.foundation](https://testnet-faucet.genlayer.foundation) |
-| Token | GEN, 18 decimals |
-
-> **Point your wallet at `https://rpc-bradbury.genlayer.com`.**
->
-> ChainList also lists a zkSync-OS host for chain 4221. That host rate limits
-> `eth_sendRawTransaction` and answers with:
->
-> ```
-> error code -32005: transaction gas rate limit exceeded: node is at capacity
-> ```
->
-> Transactions simply never land. If your wallet already has that RPC saved,
-> open MetaMask → Settings → Networks → GenLayer and replace the RPC URL. The
-> app shows a persistent banner when it detects it.
+consensus-v0.6 transactions that studionet answers with `NO_MAJORITY` and zero
+votes.
 
 ---
 
@@ -140,23 +154,30 @@ zero votes committed.
 ```bash
 pip install -r requirements-dev.txt
 python -m pytest tests/direct tests/consensus -q
+genvm-lint check contracts/GrokMarket.py
 ```
 
-318 tests. They run in-process against the real `py-genlayer` SDK — `gltest`
+327 tests. They run in-process against the real `py-genlayer` SDK — `gltest`
 direct mode downloads the runner named in the contract header — so storage,
-calldata, the equivalence principle and native transfers behave as they do on
-chain.
+calldata and the equivalence principle behave as they do on chain.
+
+`genvm-lint check` passes lint. Its separate validate step currently reports
+`Failed to load SDK` because it looks for the runner as a `.tar` file while the
+release it downloads ships it as a directory; the runner hash itself is present
+in every current GenVM release, and the contract deploys and executes on
+studionet with it.
 
 ### Check the live feeds
 
 ```bash
 python scripts/check_sources.py
+python scripts/check_sources.py --day 2026-09-18 --category STOCKS
 ```
 
-Fetches every locked source for the last complete GMT+1 day and reports each
-one's reconstructed open, close, direction and basis-point return, and whether
-the two agree. It imports the parsers out of `contracts/GrokMarket.py`, so it
-exercises exactly the code `resolve_market` runs.
+Fetches every locked source for a GMT+1 day and reports each one's
+reconstructed open, close, direction and basis-point return, and whether the two
+agree. It imports the parsers out of `contracts/GrokMarket.py`, so it exercises
+exactly the code `resolve_market` runs.
 
 A `SPLIT` result is not a failure — it means the two feeds genuinely disagreed
 on a near-flat day, and the contract would refund rather than pick a side.
@@ -180,35 +201,33 @@ npm run typecheck
 npm run build
 ```
 
-The app is locked to studionet (chain 61999, `https://studio.genlayer.com/api`)
-and has the live contract address built in. Both variables are optional:
+`VITE_WALLETCONNECT_PROJECT_ID` is the only variable the app reads, and it is
+optional: injected wallets such as MetaMask work without it.
 
-| Variable | Default |
-|---|---|
-| `VITE_GROKMARKET_CONTRACT_ADDRESS` | `0x1f774eb175CD0A1E82AB61422Fa231AD1bAC6742` — only set after a redeploy |
-| `VITE_WALLETCONNECT_PROJECT_ID` | empty — injected wallets still work |
+Writes wait for validators to decide the transaction and then show the real
+outcome — the contract's own revert message, or a refund notice — rather than
+treating a submitted transaction as a successful one.
 
 ### Deploying the contract
 
 ```bash
-genlayer network set studionet      # use the stable genlayer CLI, not the 0.40 RC
+genlayer network set studionet      # the stable genlayer CLI, not the 0.40 RC
 genlayer deploy --contract contracts/GrokMarket.py
 ```
 
-Then set `VITE_GROKMARKET_CONTRACT_ADDRESS` and redeploy the frontend.
+Then update `CONTRACT_ADDRESS` in `frontend/src/lib/env.ts` and redeploy the
+frontend.
 
 ### Vercel
 
 | Setting | Value |
 |---|---|
 | Root directory | `frontend` |
-| Build command | `npm run build` |
-| Output directory | `dist` |
-| Install command | `npm install` |
 
-`frontend/vercel.json` proxies `/binance/*` and `/stocks/*` for the display-only
-charts and adds the SPA rewrite. Those proxies are cosmetic — the contract calls
-the origin APIs directly and never touches them.
+`frontend/vercel.json` sets the Vite framework, the build command, the `dist`
+output folder, the SPA rewrite, and the `/binance/*` and `/stocks/*` proxies for
+the display-only charts. Those proxies are cosmetic — the contract calls the
+origin APIs directly and never touches them.
 
 ---
 

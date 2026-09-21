@@ -8,7 +8,8 @@ resolved.
 
 ## 1. Product
 
-A permissionless prediction market on GenLayer Testnet Bradbury.
+A permissionless prediction market on GenLayer. It is deployed on studionet
+(chain 61999); see the recorded deviations below for why not Bradbury.
 
 Two categories, fixed at compile time:
 
@@ -45,6 +46,24 @@ live in a public contract. Daily data *is* available from two independent
 keyless sources per category, so both kinds were moved to a daily window. Every
 shipped market type keeps the two-source guarantee rather than shipping one
 category that can never settle.
+
+### Recorded deviation: Coinbase instead of CoinGecko
+
+The brief named CoinGecko as crypto source A. On live data it failed twice:
+its public API rate-limited a real resolution on studionet validators
+(`TRANSIENT: source http 429`), and as a sampled index it measured a different
+span from Binance, which split ETH and SOL on 2026-09-20. Coinbase Exchange
+hourly candles replace it: keyless, independent of Binance, no 429 across 25
+back-to-back requests, and measuring the same two instants as Binance. Across
+six live days all 24 crypto asset-days agreed.
+
+### Recorded deviation: studionet instead of Bradbury
+
+Bradbury rejects contract deploys at `eth_estimateGas`, including a 289-byte
+control contract, so the CLI falls back to 200 000 gas and the transaction fails
+`intrinsic gas too low`. studio-dev executes no Python contract at all
+(`invalid_contract runner absent`, reproduced with GenLayer's own documentation
+example). The contract and frontend therefore target studionet.
 
 ---
 
@@ -113,10 +132,10 @@ URL templates and window rules.
 
 | Category | A | B |
 |---|---|---|
-| CRYPTO | CoinGecko `market_chart/range`, padded ±1h | Binance `klines` `interval=1h`, exactly 24 aligned bars |
+| CRYPTO | Coinbase Exchange `candles` `granularity=3600`, exactly 24 aligned candles | Binance `klines` `interval=1h`, exactly 24 aligned bars |
 | STOCKS | `stockanalysis.com/api/symbol/s/{t}/history` | `api.nasdaq.com/.../historical?fromdate=D&todate=D+1` |
 
-Three constraints discovered by probing, now encoded in the contract:
+Constraints discovered by probing, now encoded in the contract:
 
 - **Binance `interval=1d` is unusable.** Daily bars are UTC-aligned and a UTC
   day is one hour out of step with a GMT+1 day. 24 hourly klines are
@@ -129,6 +148,9 @@ Three constraints discovered by probing, now encoded in the contract:
   browser-like `User-Agent`, `Accept` and `Accept-Language` on every request.
   Nasdaq additionally rejects `fromdate == todate`, so the request asks for
   `D..D+1` and the parser selects the row dated `D`.
+- **Both crypto sources must measure the same two instants**: the price at the
+  window start and the price at the window end. Comparing different spans
+  splits verdicts on quiet days.
 
 ---
 
@@ -182,8 +204,8 @@ Any failure raises `INVARIANT:` and reverts.
 
 | Method | Caller | Notes |
 |---|---|---|
-| `create_market(kind, category, asset, target_day)` | anyone | rejects unknown catalog keys, past or in-progress days, >366 days ahead, duplicates |
-| `take_position(market_id, side)` | anyone while OPEN | payable; first stake ≥ 2 GEN, total ≤ 6 GEN; side switch rejected |
+| `create_market(kind, category, asset, target_day)` | anyone | rejects unknown catalog keys, past or in-progress days, >366 days ahead, duplicates, and stock markets on a Saturday or Sunday |
+| `take_position(market_id, side)` | anyone while OPEN | payable; first stake ≥ 2 GEN, total ≤ 6 GEN, no side switch. Returns `STAKED:<total>`; a rejected stake that carries value is refunded and returns `REFUNDED:<reason>` instead of reverting |
 | `resolve_market(market_id)` | anyone once settlement-eligible | no price arguments |
 | `claim(market_id)` | position owner only, once | transfers first, then flips `claimed` |
 
@@ -246,29 +268,25 @@ never fabricates a price, a direction or a winner.
 
 - Reads contract views and submits wallet transactions. It computes no outcomes.
 - Charts and live prices are display-only and never decide anything.
-- Prompts a chain switch to 4221 on `https://rpc-bradbury.genlayer.com`, and
-  shows a persistent banner if the wallet holds the zkSync-OS RPC that answers
-  `-32005`.
+- Locked to studionet (chain 61999). The network and contract address are fixed
+  in code and cannot be overridden by environment variables.
 - WalletConnect project id is optional; injected wallets work without it.
-- All `VITE_*` variables have safe fallbacks so a missing one cannot brick a
-  hosted deploy.
 - Lists paginate at 50.
-- Writes use `estimateTransactionFeesForWrite` and pass `fees` to
-  `writeContract`.
+- Writes wait for validators to decide the transaction and show the real
+  outcome: success, the contract's revert message, or a refund notice.
 
 ---
 
 ## 13. Definition of done
 
-- `python -m pytest tests/direct tests/consensus -q` passes — 318 tests
+- `python -m pytest tests/direct tests/consensus -q` passes — 327 tests
 - `cd frontend && npm run typecheck` passes
 - A reviewer can explain from `docs/RESOLUTION.md` alone why two validators
   fetching live data converge on the same `final_result`
 - `resolve_market` cannot persist a direction or winner unless both sources
   independently produced that same verdict
 - The stake path moves real GEN via `@gl.public.write.payable` and `emit_transfer`
-- The UI can create, stake, resolve and claim against Bradbury once a contract
-  address is set
+- The UI can create, stake, resolve and claim against the live deployment
 
 ---
 

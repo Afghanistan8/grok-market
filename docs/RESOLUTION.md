@@ -45,25 +45,41 @@ supply a URL, a price, a slug, a direction or a result.
 
 ### CRYPTO — BTC, ETH, SOL, XRP
 
-**Source A — CoinGecko** (cross-exchange USD average)
+**Source A — Coinbase Exchange** (BTC-USD / ETH-USD / SOL-USD / XRP-USD spot)
 
 ```
-https://api.coingecko.com/api/v3/coins/{id}/market_chart/range
-    ?vs_currency=usd&from={start-3600}&to={end+3600}
+https://api.exchange.coinbase.com/products/{PRODUCT}/candles
+    ?granularity=3600&start={start as ISO UTC}&end={end - 3600 as ISO UTC}
 ```
 
-ids: `bitcoin`, `ethereum`, `solana`, `ripple`.
+`end` is the start time of the last hourly candle, so the request returns
+exactly the 24 candles that cover the GMT+1 day. Rows are
+`[time, low, high, open, close, volume]`, newest first. The parser keys every row
+by its timestamp and requires all 24 hourly candles from `start` to
+`end - 3600`:
 
-The range is padded by one hour on each side so the window is fully covered even
-if sampling drifts. The parser then discards the padding:
+- **open** = the open of the candle stamped `start` (the price at `start`)
+- **close** = the close of the candle stamped `end - 3600` (the price at `end`)
 
-- **open** = the price of the *earliest* sample whose timestamp is `>= start`
-- **close** = the price of the *latest* sample whose timestamp is `< end`
+Selection is by timestamp, never by array position, so the newest-first order
+cannot change the outcome. Fewer than 24 candles, or a set that does not start
+and end exactly on the GMT+1 day, fails `EXTERNAL`.
 
-Selection is by timestamp, not array position, so array ordering cannot change
-the outcome. If the first in-window sample is more than an hour after `start`,
-or the last is more than two hours before `end`, the window is incomplete and
-the read fails `EXTERNAL`.
+ISO timestamps are produced by the contract's own calendar code
+(`format_iso_utc`), not a datetime library.
+
+**Why Coinbase and not CoinGecko.** The first version used CoinGecko's
+`market_chart/range`. Two problems showed up on live data:
+
+1. CoinGecko rate-limits its public API after a handful of requests. studionet
+   validators share an outbound IP, and a real resolution failed with
+   `TRANSIENT: source http 429`. A relative-return market needs four requests per
+   validator, so crypto markets would have kept failing and ended in the
+   terminal refund. Coinbase answered 25 back-to-back requests with no 429.
+2. CoinGecko is a sampled index, and the first parser took its last sample
+   *before* the end of the day while Binance's last kline closes *at* the end.
+   Comparing a 23-hour span with a 24-hour span split ETH and SOL on 2026-09-20.
+   Coinbase candles measure exactly the same two instants as Binance.
 
 **Source B — Binance** (BTCUSDT / ETHUSDT / SOLUSDT / XRPUSDT spot)
 
@@ -127,10 +143,12 @@ inside the *same* GMT+1 calendar day, so the session dated `D` on the exchange
 is exactly the session inside GMT+1 day `D`. No session is ever split across
 two windows.
 
-Weekends and market holidays have no session at all. Neither feed invents an
-overnight print, so both simply have no row for that date and the read fails
-`EXTERNAL` — which is retryable and eventually refunds. The contract never
-fabricates a price for a day the market was closed.
+Weekends have no session, so `create_market` refuses stock markets on a
+Saturday or Sunday outright. Market holidays are not known to the contract: on a
+holiday neither feed has a row for that date, the read fails `EXTERNAL`, and
+after five days the market takes the terminal refund. Neither feed invents an
+overnight print, and the contract never fabricates a price for a day the market
+was closed.
 
 ---
 
@@ -205,13 +223,14 @@ feed's verdict becomes the stored result.
 
 ### Disagreement is normal, and it is not a bug
 
-CoinGecko reports a cross-exchange USD average; Binance reports one USDT pair on
-one venue. On a day with a large move both agree easily. On a *near-flat* day
-they can genuinely differ in sign — a real run of `scripts/check_sources.py`
-produced CoinGecko at −6 bps (DOWN) and Binance at +15 bps (UP) for the same BTC
-day. The honest answer there is that the day had no clear direction, so the
-contract refuses to pick one and refunds everyone. Expect this occasionally on
-quiet days, particularly for Kind A crypto markets.
+Coinbase and Binance are two separate exchanges quoting against USD and USDT
+respectively. On a day with a clear move they agree easily: across six live days
+(2026-09-15 to 2026-09-20) all 24 asset-days agreed. On a *near-flat* day, or in
+a relative-return race decided by a few basis points, they can genuinely
+differ. On 2026-09-20 Coinbase ranked SOL first (+36 bps) while Binance ranked
+ETH first (+33 bps, SOL +32 bps), so that crypto relative-return market settles
+`INCONCLUSIVE`. The honest answer is that the race had no clear winner, so the
+contract refuses to pick one and refunds everyone.
 
 ---
 
@@ -236,10 +255,9 @@ Every decision-bearing field in that string is normalized:
 |---|---|
 | `"80494.31000000"` vs `80494.31` | both become the integer `8049431000000` |
 | JSON key order, whitespace, separators | never read; only named fields are extracted |
-| extra padding samples outside the window | discarded by the `>= start` / `< end` filter |
-| array ordering | open/close chosen by timestamp, not position |
-| sample timestamps a few hundred ms apart | the hour bucket is what is compared, not the millisecond |
-| a different number of intermediate hourly samples | only the first and last in-window values are used |
+| candles outside the window | discarded by the `>= start` / `< end` filter |
+| array ordering (Coinbase is newest first) | open/close chosen by timestamp, not position |
+| intermediate hourly candles changing | only the first candle's open and the last candle's close are used |
 | dividend-adjusted vs raw close | both feeds' raw `open`/`close` fields are used, never `adjusted_close` |
 
 What remains is a short string containing only the window's opening price, its
@@ -249,6 +267,11 @@ validators looking at the same completed day produce the same string, so
 
 If they genuinely saw different prices, the strings differ, consensus fails, and
 nothing is written. The market stays `READY_TO_SETTLE` and anyone can retry.
+
+This has been exercised on live studionet validators, not only in tests: the
+same `fetch_payload` reached `MAJORITY_AGREE` for crypto direction (Coinbase +
+Binance), crypto relative-return (eight live requests per validator), and both
+stock kinds (stockanalysis + Nasdaq, identical to the cent).
 
 ---
 

@@ -25,15 +25,15 @@ Loads the market, checks it is unresolved, reads consensus time from
 terminal refund path. Everything here is a pure function of storage plus the
 transaction timestamp, so every validator computes it identically.
 
-Values the nondet block will need (`kind`, `category`, `asset`, `day_index`,
-`win_start`, `win_end`) are copied into plain locals here. The closure captures
-those locals rather than reaching back into storage, which keeps the block free
-of storage reads.
+Values the nondet block will need (`kind`, `category`, `asset`, `day_index`)
+are copied into plain locals here. The closure captures those locals rather than
+reaching back into storage, which keeps the block free of storage reads.
 
 ### Inside the block — non-deterministic
 
-`read_sources()` is the only place `gl.nondet.web.get` is called. It is passed
-to `gl.eq_principle.strict_eq`, which runs it on the leader and independently on
+`fetch_payload()` is the only place `gl.nondet.web.get` is called. It is a
+module-level function, and `resolve_market` hands a closure over it to
+`gl.eq_principle.strict_eq`, which runs it on the leader and independently on
 every validator. The GenVM forbids storage writes, contract calls, message
 emission and nested nondet blocks inside it, and the contract does none of them.
 
@@ -109,6 +109,28 @@ Views return wei as **decimal strings**, not integers: 6 GEN is `6e18`, which is
 far beyond `Number.MAX_SAFE_INTEGER`, and a JSON number would silently lose
 precision in the browser. The frontend does `BigInt(value)`.
 
+### Value attached to a reverted call stays with the contract
+
+On GenLayer the GEN sent with a call is credited to the contract even when the
+call reverts. This was observed on studionet: a stake rejected for switching
+sides reverted, yet its 2 GEN stayed in the contract with no position recording
+it, and so no way to claim it back.
+
+`take_position` is therefore written so that it never reverts once value is
+attached. `_stake_rejection` checks every rule without raising and returns the
+reason or `""`. If there is a reason, the value goes straight back to the sender
+with `emit_transfer` in the same transaction, a `REFUND` activity entry is
+written, and the method returns `REFUNDED:<reason>`. Otherwise it records the
+position and returns `STAKED:<total wei>`. Only a call carrying no value may
+revert, because it has nothing to lose.
+
+### Outbound transfers arrive after finality
+
+`emit_transfer` does not move GEN inside the calling transaction. It queues a
+separate transfer transaction that runs once the calling transaction finalizes;
+on studionet that took roughly 40 seconds. This applies to both claim payouts and
+stake refunds, and the UI says so.
+
 ---
 
 ## Permissions
@@ -116,7 +138,7 @@ precision in the browser. The frontend does `BigInt(value)`.
 | Method | Who can call it |
 |---|---|
 | `create_market` | anyone |
-| `take_position` | anyone, while the market is `OPEN` |
+| `take_position` | anyone, while the market is `OPEN`; otherwise the stake is refunded |
 | `resolve_market` | anyone, once the window has closed |
 | `claim` | the position owner only, once |
 
@@ -148,7 +170,7 @@ problem from a permanent one.
 
 | Prefix | Meaning | Market afterwards |
 |---|---|---|
-| `EXPECTED:` | caller error — bad input, wrong phase, duplicate market, side switch, double claim | unchanged |
+| `EXPECTED:` | caller error — bad input, wrong phase, duplicate market, double claim, a stake sent with no value | unchanged |
 | `TRANSIENT:` | source timeout, 408, 425, 429, 5xx, empty body | stays `READY_TO_SETTLE`, retryable |
 | `EXTERNAL:` | source 4xx, malformed JSON, incomplete window, no session, oversized or non-UTF-8 body | stays `READY_TO_SETTLE`, retryable |
 | `INVARIANT:` | the agreed payload is malformed or self-contradictory | must never happen in honest execution |
@@ -172,7 +194,7 @@ stand-in for the VM.
 - `tests/consensus/` — payload construction and the `parse_agreed` gate, plus
   leader/validator convergence.
 
-Two harness details worth knowing:
+Three harness details worth knowing:
 
 - `VMContext.warp` does not carry `datetime` back into the already-imported
   `gl.message_raw` dict, so `tests/conftest.py` provides a `warp()` helper that
@@ -187,6 +209,12 @@ Two harness details worth knowing:
   `vm._gl_call_hook`. That same hook is used to simulate a *failing* transfer and
   prove the claim rolls back with `claimed` still false.
 
+Direct mode cannot reproduce two things that only real validators show: live
+web data under consensus, and GEN actually moving. Both were checked on
+studionet (see the README's "What has been verified on the live network"). That
+live testing is what found the CoinGecko rate limit, the 23-hour sampling bug
+and the value trapped by a reverted stake; each now has a regression test.
+
 ---
 
 ## Frontend
@@ -194,15 +222,25 @@ Two harness details worth knowing:
 The app only reads views and submits wallet transactions. It computes no
 outcomes.
 
+- The network is fixed to studionet (chain 61999, `https://studio.genlayer.com/api`)
+  and the contract address is fixed in `frontend/src/lib/env.ts`. Neither can be
+  changed by an environment variable, so a hosted build can never silently point
+  at a stale contract.
+- Writes go through genlayer-js 1.1.8: `writeContract({ address, functionName,
+  args, value })`. That version takes no `fees` argument; the fee-estimate API in
+  GenLayer's current docs belongs to the consensus-v0.6 release candidate.
+- A submitted transaction is not a successful one. Every write waits for
+  `waitForTransactionReceipt({ status: "ACCEPTED" })`, then reads
+  `consensus_data.leader_receipt[0]`: `execution_result` is `SUCCESS` or `ERROR`,
+  and `result.payload` carries either the return value (as
+  `{ readable: "<json>" }`) or the contract's revert message. The UI shows that
+  outcome, including a `REFUNDED:` notice for a rejected stake.
+- In a browser, genlayer-js hands `eth_sendTransaction` to the wallet, which
+  fills in nonce, gas and gas price from its own RPC and broadcasts. wagmi adds
+  and switches to chain 61999 on first write.
+- Views return plain JSON objects with ordinary numbers; wei amounts come back
+  as decimal strings.
 - Charts and live prices are **display only**. They are fetched through a
   same-origin proxy purely for decoration and never influence settlement. The
-  contract calls the origin APIs directly and would ignore the proxy entirely.
+  contract calls the origin APIs directly and never touches the proxy.
 - All list views are paginated at 50 records, the contract's `MAX_PAGE`.
-- Writes go through `genlayer-js`, which requires a fee estimate:
-  `estimateTransactionFeesForWrite` then `writeContract({ ..., fees })`. Omitting
-  `fees` is a common silent write failure.
-- The wallet must be pointed at `https://rpc-bradbury.genlayer.com`. The
-  zkSync-OS ChainList host for chain 4221 rate limits `eth_sendRawTransaction`
-  with `-32005 transaction gas rate limit exceeded`, which surfaces as
-  transactions that simply never land. The app detects that RPC and shows a
-  persistent banner.
