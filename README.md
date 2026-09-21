@@ -75,6 +75,7 @@ at all and refunds every stake. It never invents a price.
 
 | | |
 |---|---|
+| App | [grok-market-swart.vercel.app](https://grok-market-swart.vercel.app) |
 | Contract | `0x1f774eb175CD0A1E82AB61422Fa231AD1bAC6742` |
 | Network | GenLayer Studio Network (studionet) |
 | Chain ID | 61999 |
@@ -84,8 +85,8 @@ Verified live after deploy: `get_stats` and `get_supported_universe` return the
 locked catalog, and `create_market` wrote market #1 (BTC, GMT+1 day 2026-09-22)
 with `cutoff_at` exactly `day_index * 86400 - 3600`.
 
-The frontend is network-agnostic — set `VITE_GENLAYER_NETWORK` to `studionet`,
-`bradbury` or `asimov` and the chain id, RPC, explorer and faucet follow.
+The frontend is locked to studionet: the chain, RPC and contract address are
+built in, so it needs no environment variables to build or deploy.
 
 ### Why studionet and not Bradbury
 
@@ -179,19 +180,19 @@ npm run typecheck
 npm run build
 ```
 
-Environment (all optional — the app falls back to sane defaults so a missing
-variable cannot brick a deploy):
+The app is locked to studionet (chain 61999, `https://studio.genlayer.com/api`)
+and has the live contract address built in. Both variables are optional:
 
 | Variable | Default |
 |---|---|
-| `VITE_GROKMARKET_CONTRACT_ADDRESS` | empty — the app shows a "not configured" notice |
-| `VITE_GENLAYER_RPC_URL` | `https://rpc-bradbury.genlayer.com` |
+| `VITE_GROKMARKET_CONTRACT_ADDRESS` | `0x1f774eb175CD0A1E82AB61422Fa231AD1bAC6742` — only set after a redeploy |
 | `VITE_WALLETCONNECT_PROJECT_ID` | empty — injected wallets still work |
 
 ### Deploying the contract
 
 ```bash
-gltest deploy --network testnet_bradbury      # or use the Studio at studio.genlayer.com
+genlayer network set studionet      # use the stable genlayer CLI, not the 0.40 RC
+genlayer deploy --contract contracts/GrokMarket.py
 ```
 
 Then set `VITE_GROKMARKET_CONTRACT_ADDRESS` and redeploy the frontend.

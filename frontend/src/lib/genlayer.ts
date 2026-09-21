@@ -1,7 +1,7 @@
 import { createClient } from "genlayer-js";
-import * as glChains from "genlayer-js/chains";
+import { studionet } from "genlayer-js/chains";
 
-import { env, network } from "./env";
+import { env } from "./env";
 
 type EthereumProvider = Parameters<typeof createClient>[0] extends { provider?: infer P }
   ? NonNullable<P>
@@ -9,11 +9,10 @@ type EthereumProvider = Parameters<typeof createClient>[0] extends { provider?: 
 
 type ChainConfig = NonNullable<Parameters<typeof createClient>[0]>["chain"];
 
-/** The genlayer-js chain definition for the configured network, with our RPC. */
+/** genlayer-js's studionet chain, pinned to the app's RPC. */
 function chain(): ChainConfig {
-  const base = (glChains as Record<string, unknown>)[network.chainExport] as object;
   return {
-    ...base,
+    ...studionet,
     rpcUrls: { default: { http: [env.rpcUrl] } },
   } as unknown as ChainConfig;
 }
@@ -38,12 +37,6 @@ export function writeClient(account: `0x${string}`, provider: unknown) {
   });
 }
 
-/** `-32005` is the rate-limited RPC answering instead of the GenLayer one. */
-export function isRateLimited(error: unknown): boolean {
-  const text = describeError(error);
-  return text.includes("-32005") || text.includes("gas rate limit") || text.includes("at capacity");
-}
-
 export function describeError(error: unknown): string {
   if (!error) return "";
   if (typeof error === "string") return error;
@@ -61,10 +54,6 @@ export function describeError(error: unknown): string {
  */
 export function humanError(error: unknown): string {
   const raw = describeError(error);
-
-  if (isRateLimited(error)) {
-    return "Your wallet's RPC rejected the transaction (-32005, node at capacity). Switch its RPC to https://rpc-bradbury.genlayer.com and try again.";
-  }
 
   const match = raw.match(/(EXPECTED|TRANSIENT|EXTERNAL|INVARIANT):\s*([^"'}\\]+)/);
   if (match) {

@@ -1,6 +1,6 @@
 import { Link, Outlet } from "@tanstack/react-router";
 
-import { ConfigBanner, RpcBanner } from "../components/Banners";
+import { ConfigBanner } from "../components/Banners";
 import { Header } from "../components/Header";
 import { EXPLORER, env, isConfigured } from "../lib/env";
 
@@ -8,7 +8,6 @@ export function RootLayout() {
   return (
     <div className="relative z-10 flex min-h-screen flex-col">
       <ConfigBanner />
-      <RpcBanner />
       <Header />
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8">
         <Outlet />

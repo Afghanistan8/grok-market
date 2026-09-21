@@ -1,4 +1,4 @@
-import { env, hasRpcHazard, network } from "../lib/env";
+import { env, network } from "../lib/env";
 
 function Rule({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -140,13 +140,6 @@ export function HowItWorksPage() {
         <p>
           Use <code className="rounded bg-black/40 px-1 text-zinc-300">{env.defaultRpc}</code> for{" "}
           {network.name} (chain {network.chainId}).
-        </p>
-        <p hidden={!hasRpcHazard}>
-          ChainList also lists a zkSync-OS host for this chain. That one rate limits transactions
-          and answers{" "}
-          <code className="rounded bg-black/40 px-1 text-zinc-300">-32005 gas rate limit</code>, so
-          your transactions will simply never land. If your wallet already saved it, open MetaMask
-          → Settings → Networks → GenLayer and replace the RPC URL.
         </p>
       </Rule>
 
