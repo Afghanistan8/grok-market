@@ -272,6 +272,9 @@ never fabricates a price, a direction or a winner.
   in code and cannot be overridden by environment variables.
 - WalletConnect project id is optional; injected wallets work without it.
 - Lists paginate at 50.
+- Every write is priced with `estimateTransactionFeesForWrite` and submitted
+  with the returned fees (consensus v0.6, genlayer-js 2.0). No transaction is
+  sent without a quote. Covered by `frontend/src/lib/contract.test.ts`.
 - Writes wait for validators to decide the transaction and show the real
   outcome: success, the contract's revert message, or a refund notice.
 
@@ -281,6 +284,7 @@ never fabricates a price, a direction or a winner.
 
 - `python -m pytest tests/direct tests/consensus -q` passes — 327 tests
 - `cd frontend && npm run typecheck` passes
+- `cd frontend && npm test` passes — 22 tests on the fee-estimated write path
 - A reviewer can explain from `docs/RESOLUTION.md` alone why two validators
   fetching live data converge on the same `final_result`
 - `resolve_market` cannot persist a direction or winner unless both sources

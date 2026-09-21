@@ -1,3 +1,5 @@
+import { isSuccessful } from "genlayer-js";
+
 import { env, isConfigured } from "./env";
 import { readClient, writeClient } from "./genlayer";
 import type {
@@ -69,7 +71,7 @@ export const api = {
 
 /* ----------------------------------------------------------------- writes */
 
-interface WriteContext {
+export interface WriteContext {
   account: `0x${string}`;
   provider: unknown;
 }
@@ -79,6 +81,15 @@ export interface WriteOutcome {
   hash: string;
   /** The contract method's return value, decoded to a string. */
   value: string;
+  /** The fee quote the transaction was submitted with. */
+  fees: TransactionFees;
+}
+
+/** The fee fields passed into writeContract, taken unchanged from the estimate. */
+export interface TransactionFees {
+  distribution: unknown;
+  messageAllocations?: unknown;
+  feeValue: bigint;
 }
 
 /** Thrown when validators decided the call and the contract reverted it. */
@@ -89,9 +100,10 @@ export class ContractRevert extends Error {
   }
 }
 
-interface LeaderResult {
-  execution_result?: string;
-  result?: { status?: string; payload?: unknown };
+interface DecidedReceipt {
+  consensus_data?: {
+    leader_receipt?: { execution_result?: string; result?: { status?: string; payload?: unknown } }[];
+  };
 }
 
 /** Studio receipts wrap return values as ``{ readable: "<json text>" }``. */
@@ -109,12 +121,15 @@ function decodeReturn(payload: unknown): string {
 }
 
 /**
- * Submits a write and waits for validators to decide it.
+ * The one path every contract write takes (consensus v0.6 fee flow):
  *
- * A submitted transaction is not a successful one: the contract can still
- * revert it after consensus. So this waits for the decision, then reads the
- * leader's execution result and either returns the method's return value or
- * throws the contract's own revert message.
+ * 1. quote this exact call with ``estimateTransactionFeesForWrite``;
+ * 2. submit it with ``writeContract``, passing the returned ``distribution``,
+ *    ``messageAllocations`` and ``feeValue`` unchanged;
+ * 3. wait until validators decide it, and treat it as done only if
+ *    ``isSuccessful`` agrees: status ACCEPTED or FINALIZED *and* execution
+ *    result FINISHED_WITH_RETURN. Otherwise the contract's own revert message
+ *    is thrown.
  */
 async function send(
   ctx: WriteContext,
@@ -124,28 +139,35 @@ async function send(
 ): Promise<WriteOutcome> {
   if (!isConfigured) throw new NotConfiguredError();
   const client = writeClient(ctx.account, ctx.provider);
-  const hash = String(
-    await client.writeContract({
-      address: env.contractAddress as `0x${string}`,
-      functionName,
-      args: args as never,
-      value,
-    }),
-  ) as `0x${string}`;
+  const request = {
+    address: env.contractAddress as `0x${string}`,
+    functionName,
+    args: args as never,
+    value,
+  };
 
-  const receipt = (await client.waitForTransactionReceipt({
+  const estimate = await client.estimateTransactionFeesForWrite(request);
+  const fees: TransactionFees = {
+    distribution: estimate.distribution,
+    messageAllocations: estimate.messageAllocations,
+    feeValue: estimate.feeValue,
+  };
+
+  const hash = String(await client.writeContract({ ...request, fees: fees as never }));
+
+  const receipt = await client.waitForTransactionReceipt({
     hash: hash as never,
-    status: "ACCEPTED" as never,
+    waitUntil: "decided",
     interval: 3000,
     retries: 100,
-  })) as unknown as { consensus_data?: { leader_receipt?: LeaderResult[] } };
+  });
 
-  const leader = receipt.consensus_data?.leader_receipt?.[0];
-  if (!leader) throw new ContractRevert("Validators did not return a result for this transaction.");
-  if (leader.execution_result !== "SUCCESS") {
-    throw new ContractRevert(decodeReturn(leader.result?.payload) || "The contract rejected this transaction.");
+  const leader = (receipt as unknown as DecidedReceipt).consensus_data?.leader_receipt?.[0];
+  const returned = decodeReturn(leader?.result?.payload);
+  if (!isSuccessful(receipt as never)) {
+    throw new ContractRevert(returned || "The contract rejected this transaction.");
   }
-  return { hash, value: decodeReturn(leader.result?.payload) };
+  return { hash, value: returned, fees };
 }
 
 export const writes = {

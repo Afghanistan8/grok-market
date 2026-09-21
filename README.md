@@ -30,6 +30,12 @@ The frontend is locked to studionet. The chain, RPC and contract address are
 fixed in `frontend/src/lib/env.ts`, so it needs no environment variables to
 build or deploy.
 
+> **Writes are paused on studionet.** The app's writes use the consensus v0.6
+> fee flow (`estimateTransactionFeesForWrite`), which stable studionet does not
+> support. Browsing works; creating, staking, resolving and claiming stop before
+> anything is sent, with a clear message. See "Writes use the consensus v0.6 fee
+> flow" below.
+
 ### What has been verified on the live network
 
 Every item below was run against real studionet validators, not simulated:
@@ -44,7 +50,7 @@ Every item below was run against real studionet validators, not simulated:
 | Resolution fetch, crypto direction | Coinbase + Binance, `MAJORITY_AGREE` |
 | Resolution fetch, crypto relative-return | 8 live requests per validator, `MAJORITY_AGREE` |
 | Resolution fetch, stock direction and relative-return | stockanalysis + Nasdaq, `MAJORITY_AGREE`, prices identical to the cent |
-| Browser-wallet write path | a MetaMask-style EIP-1193 wallet (gas estimate, sign, broadcast) created a market and staked |
+| Browser-wallet write path | a MetaMask-style EIP-1193 wallet (gas estimate, sign, broadcast) created a market and staked (before the v0.6 fee migration) |
 
 The resolution fetch was exercised on a throwaway copy of the contract with one
 extra test method, because a real market cannot be resolved until its GMT+1 day
@@ -204,9 +210,30 @@ npm run build
 `VITE_WALLETCONNECT_PROJECT_ID` is the only variable the app reads, and it is
 optional: injected wallets such as MetaMask work without it.
 
-Writes wait for validators to decide the transaction and then show the real
-outcome — the contract's own revert message, or a refund notice — rather than
-treating a submitted transaction as a successful one.
+### Writes use the consensus v0.6 fee flow
+
+Every write — create, stake, resolve and claim — goes through one helper
+(`send` in `frontend/src/lib/contract.ts`). It prices the exact call with
+`estimateTransactionFeesForWrite`, submits it with `writeContract` and the
+returned fees unchanged, waits for validators to decide it, and checks the SDK's
+`isSuccessful` before showing success. If the estimate fails, nothing is sent.
+
+```bash
+cd frontend
+npm test        # 22 tests: all four writes use the estimated fees
+```
+
+Writes use genlayer-js 2.0.0-rc.1; reads use genlayer-js 1.1.8 (aliased as
+`genlayer-js-legacy`), because 2.0's reads fail on stable studionet.
+
+**Current limitation.** Stable studionet, where the contract is deployed, has no
+v0.6 fee system: fee estimation fails there with
+`sim_getFeeConfig ... not available`. So on the live site, reading works but
+every write stops before sending and says the network does not provide fee
+estimation. studio-dev (the v0.6 preview) prices fees but currently executes no
+Python contract, and Bradbury's fee manager is not live yet. Writes will work
+once the contract is deployed on a v0.6 network that runs contracts. See
+`docs/ARCHITECTURE.md` for the measurements.
 
 ### Deploying the contract
 

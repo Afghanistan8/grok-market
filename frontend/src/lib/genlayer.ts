@@ -1,41 +1,48 @@
-import { createClient } from "genlayer-js";
+/**
+ * Two genlayer-js release lines, on purpose:
+ *
+ * - Writes use genlayer-js 2.0 (the consensus v0.6 release family). Every
+ *   transaction is priced with `estimateTransactionFeesForWrite` and submitted
+ *   with the returned fees. See `send` in ./contract.ts.
+ * - Reads use genlayer-js 1.1.8. On stable studionet the 2.0 client's `gen_call`
+ *   fails with "execution failed", so a 2.0-only app could not show the board.
+ */
+import { createClient as createReadClient } from "genlayer-js-legacy";
+import { studionet as legacyStudionet } from "genlayer-js-legacy/chains";
+import { createClient as createWriteClient } from "genlayer-js";
 import { studionet } from "genlayer-js/chains";
 
 import { env } from "./env";
 
-type EthereumProvider = Parameters<typeof createClient>[0] extends { provider?: infer P }
-  ? NonNullable<P>
-  : never;
+type ReadChain = NonNullable<Parameters<typeof createReadClient>[0]>["chain"];
+type WriteConfig = NonNullable<Parameters<typeof createWriteClient>[0]>;
+type WriteChain = WriteConfig["chain"];
+type EthereumProvider = NonNullable<WriteConfig["provider"]>;
 
-type ChainConfig = NonNullable<Parameters<typeof createClient>[0]>["chain"];
+/** Read client. No account, no wallet — every view is a `gen_call`. */
+export function readClient() {
+  const chain = {
+    ...legacyStudionet,
+    rpcUrls: { default: { http: [env.rpcUrl] } },
+  } as unknown as ReadChain;
+  return createReadClient({ chain, endpoint: env.rpcUrl });
+}
 
-/** genlayer-js's studionet chain, pinned to the app's RPC. */
-function chain(): ChainConfig {
-  return {
+/** Write client bound to the connected wallet, on the v0.6 SDK. */
+export function writeClient(account: `0x${string}`, provider: unknown) {
+  const chain = {
     ...studionet,
     rpcUrls: { default: { http: [env.rpcUrl] } },
-  } as unknown as ChainConfig;
-}
-
-/**
- * Read client. No account, no wallet — every view is a `gen_call`.
- *
- * The chain object always carries the app's RPC, so a wallet that still holds
- * the rate-limited zkSync-OS endpoint cannot poison reads.
- */
-export function readClient() {
-  return createClient({ chain: chain(), endpoint: env.rpcUrl });
-}
-
-/** Write client bound to the connected wallet. */
-export function writeClient(account: `0x${string}`, provider: unknown) {
-  return createClient({
-    chain: chain(),
+  } as unknown as WriteChain;
+  return createWriteClient({
+    chain,
     endpoint: env.rpcUrl,
     account,
     provider: provider as EthereumProvider,
   });
 }
+
+export type WriteClient = ReturnType<typeof writeClient>;
 
 export function describeError(error: unknown): string {
   if (!error) return "";
@@ -54,6 +61,10 @@ export function describeError(error: unknown): string {
  */
 export function humanError(error: unknown): string {
   const raw = describeError(error);
+
+  if (raw.includes("sim_getFeeConfig") || raw.includes("Fee policy estimation is not supported")) {
+    return "This network does not provide transaction fee estimation, which consensus v0.6 writes require. Nothing was sent.";
+  }
 
   const match = raw.match(/(EXPECTED|TRANSIENT|EXTERNAL|INVARIANT):\s*([^"'}\\]+)/);
   if (match) {

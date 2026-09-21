@@ -226,15 +226,32 @@ outcomes.
   and the contract address is fixed in `frontend/src/lib/env.ts`. Neither can be
   changed by an environment variable, so a hosted build can never silently point
   at a stale contract.
-- Writes go through genlayer-js 1.1.8: `writeContract({ address, functionName,
-  args, value })`. That version takes no `fees` argument; the fee-estimate API in
-  GenLayer's current docs belongs to the consensus-v0.6 release candidate.
-- A submitted transaction is not a successful one. Every write waits for
-  `waitForTransactionReceipt({ status: "ACCEPTED" })`, then reads
-  `consensus_data.leader_receipt[0]`: `execution_result` is `SUCCESS` or `ERROR`,
-  and `result.payload` carries either the return value (as
-  `{ readable: "<json>" }`) or the contract's revert message. The UI shows that
-  outcome, including a `REFUNDED:` notice for a rejected stake.
+- **Writes use the consensus v0.6 fee flow** (genlayer-js 2.0.0-rc.1). Every
+  write — create, stake, resolve, claim — goes through one helper, `send` in
+  `frontend/src/lib/contract.ts`, which:
+  1. prices that exact call with `estimateTransactionFeesForWrite({ address,
+     functionName, args, value })`;
+  2. submits it with `writeContract({ ..., fees })`, passing the returned
+     `distribution`, `messageAllocations` and `feeValue` unchanged;
+  3. waits with `waitForTransactionReceipt({ waitUntil: "decided" })` and treats
+     the write as done only if the SDK's `isSuccessful` agrees (status ACCEPTED
+     or FINALIZED and execution result FINISHED_WITH_RETURN). Otherwise it throws
+     the contract's own revert message from `leader_receipt[0].result.payload`.
+  If the estimate fails, nothing is submitted. `src/lib/contract.test.ts` covers
+  all four writes (run `npm test`).
+- **Reads use genlayer-js 1.1.8**, installed under the alias
+  `genlayer-js-legacy`. On stable studionet, 2.0's `gen_call` fails with
+  "execution failed", so a 2.0-only app could not display the board.
+- **Network compatibility, measured 2026-09-22.** Stable studionet has no v0.6
+  fee system: `estimateTransactionFeesForWrite` fails with
+  `sim_getFeeConfig ... not available`, and 2.0 writes sent without fees finalize
+  with no votes and no execution. studio-dev (the v0.6 preview) prices fees but
+  executes no Python contract (`invalid_contract runner malformed`, with every
+  runner hash and header form tried). Bradbury's fee manager reverts on
+  `quoteGasPrice`. So on the current deployment the app shows a clear
+  "network does not provide fee estimation" message instead of sending an
+  unpriced transaction, and writes will work once the contract runs on a v0.6
+  network.
 - In a browser, genlayer-js hands `eth_sendTransaction` to the wallet, which
   fills in nonce, gas and gas price from its own RPC and broadcasts. wagmi adds
   and switches to chain 61999 on first write.
