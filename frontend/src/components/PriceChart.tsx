@@ -31,8 +31,11 @@ interface Point {
  * inside the contract, against the origin APIs, under the equivalence principle.
  */
 async function loadSeries(market: Market): Promise<Point[]> {
-  const from = market.cutoff_at - 2 * DAY;
-  const to = market.settles_at + DAY;
+  // Show the four days leading up to the market's day, or up to now if the
+  // day is still in the future. Asking for a future range returns nothing.
+  const now = Math.floor(Date.now() / 1000);
+  const to = Math.min(market.settles_at + DAY, now);
+  const from = to - 4 * DAY;
 
   if (market.category === "CRYPTO") {
     const symbol = BINANCE_PAIRS[market.kind === "A" ? market.asset : market.universe[0]];
@@ -80,7 +83,9 @@ export function PriceChart({ market }: { market: Market }) {
         ) : isError || !data || data.length === 0 ? (
           <div className="flex h-full items-center justify-center px-6 text-center">
             <span className="text-xs text-zinc-600">
-              Chart data is unavailable right now. This has no effect on settlement.
+              {isError
+                ? "Chart data is unavailable right now. This has no effect on settlement."
+                : "No price data for this range yet. This has no effect on settlement."}
             </span>
           </div>
         ) : (
@@ -144,8 +149,11 @@ export function PriceChart({ market }: { market: Market }) {
       </div>
 
       <p className="mt-3 text-xs text-zinc-600">
-        The shaded band is the GMT+1 day this market settles on. Prices shown here are decoration —
-        the contract fetches its own data from {market.source_a} and {market.source_b}.
+        {market.cutoff_at > Math.floor(Date.now() / 1000)
+          ? "This market's GMT+1 day has not started yet, so the chart shows recent prices. "
+          : "The shaded band is the GMT+1 day this market settles on. "}
+        Prices shown here are decoration — the contract fetches its own data from{" "}
+        {market.source_a} and {market.source_b}.
       </p>
     </div>
   );

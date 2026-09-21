@@ -90,7 +90,7 @@ export function HomePage() {
         {!isConfigured ? (
           <Empty
             title="No contract configured yet"
-            hint="Set VITE_GROKMARKET_CONTRACT_ADDRESS to point this app at a deployment."
+            hint="Set the contract address in src/lib/env.ts."
           />
         ) : open.isLoading ? (
           <Loading />
@@ -128,7 +128,7 @@ export function HomePage() {
             <p className="font-mono text-xs tracking-wider text-zinc-300">CRYPTO</p>
             <p className="mt-1 text-sm text-zinc-500">BTC · ETH · SOL · XRP</p>
             <p className="mt-2 text-xs text-zinc-600">
-              CoinGecko cross-exchange average, and Binance hourly klines rebuilt into a GMT+1 day.
+              Coinbase and Binance hourly candles, each rebuilt into the same GMT+1 day.
             </p>
           </div>
           <div>

@@ -39,25 +39,35 @@ export function CreatePage() {
   const existing = useQuery({
     queryKey: ["unique", kind, category, kind === "A" ? asset : "", day],
     queryFn: () => api.byUniqueKey(kind, category, kind === "A" ? asset : "", day),
-    enabled: isConfigured && day.length === 10,
+    enabled: isConfigured && /^\d{4}-\d{2}-\d{2}$/.test(day),
   });
 
   const cutoff = dayStart(day);
+  const validDay = /^\d{4}-\d{2}-\d{2}$/.test(day) && Number.isFinite(cutoff);
   const settles = cutoff + 86400;
   const refund = settles + 5 * 86400;
   const nowSeconds = Math.floor(Date.now() / 1000);
 
-  const duplicate = existing.data?.exists === true;
-  const inPast = cutoff <= nowSeconds;
-  const tooFar = cutoff - nowSeconds > 366 * 86400;
+  const duplicate = validDay && existing.data?.exists === true;
+  const inPast = validDay && cutoff <= nowSeconds;
+  const tooFar = validDay && cutoff - nowSeconds > 366 * 86400;
+  const weekday = validDay ? new Date(`${day}T00:00:00Z`).getUTCDay() : -1;
+  const stockWeekend = category === "STOCKS" && (weekday === 0 || weekday === 6);
 
   const create = useMutation({
     mutationFn: async () =>
       writes.createMarket(await getContext(), kind, category, kind === "A" ? asset : "", day),
-    onSuccess: () => navigate({ to: "/markets" }),
+    onSuccess: (outcome) => {
+      const id = Number(outcome.value);
+      if (Number.isFinite(id) && id > 0) {
+        navigate({ to: "/markets/$id", params: { id: String(id) } });
+      } else {
+        navigate({ to: "/markets" });
+      }
+    },
   });
 
-  const blocked = duplicate || inPast || tooFar || !isConnected;
+  const blocked = !validDay || duplicate || inPast || tooFar || stockWeekend || !isConnected;
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -150,6 +160,7 @@ export function CreatePage() {
           />
         </Field>
 
+        {validDay ? (
         <div className="rounded-md border border-zinc-900 bg-black/30 p-4">
           <h3 className="label">Preview</h3>
           <dl className="mt-3 space-y-2 text-xs">
@@ -163,6 +174,9 @@ export function CreatePage() {
             <Preview label="Terminal refund" value={gmt1(refund)} sub="5 days after settlement opens" />
           </dl>
         </div>
+        ) : (
+          <ErrorNote message="Pick a target day." />
+        )}
 
         {duplicate ? (
           <ErrorNote
@@ -171,6 +185,9 @@ export function CreatePage() {
         ) : null}
         {inPast ? <ErrorNote message="The target day must start in the future." /> : null}
         {tooFar ? <ErrorNote message="The target day cannot be more than 366 days ahead." /> : null}
+        {stockWeekend ? (
+          <ErrorNote message="US stock markets are closed on weekends, so a stock market cannot target a Saturday or Sunday." />
+        ) : null}
 
         <button
           type="button"
@@ -178,7 +195,11 @@ export function CreatePage() {
           disabled={blocked || create.isPending}
           onClick={() => create.mutate()}
         >
-          {create.isPending ? "Creating..." : isConnected ? "Create market" : "Connect a wallet"}
+          {create.isPending
+            ? "Waiting for validators..."
+            : isConnected
+              ? "Create market"
+              : "Connect a wallet"}
         </button>
 
         {create.isError ? <ErrorNote message={humanError(create.error)} /> : null}

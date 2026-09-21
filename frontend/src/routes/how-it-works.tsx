@@ -36,7 +36,7 @@ export function HowItWorksPage() {
         </p>
         <p>
           Every asset has <strong className="text-zinc-200">two independent sources</strong>.
-          Crypto settles on CoinGecko and Binance; stocks settle on stockanalysis.com and Nasdaq.
+          Crypto settles on Coinbase and Binance; stocks settle on stockanalysis.com and Nasdaq.
         </p>
       </Rule>
 
@@ -71,9 +71,9 @@ export function HowItWorksPage() {
           . Nobody wins and nobody loses.
         </p>
         <p>
-          This happens most often on near-flat days, where a cross-exchange average and a single
-          venue's pair can genuinely differ on the sign of a tiny move. That is the honest answer:
-          the day had no clear direction, so the contract refuses to invent one.
+          This happens most often on near-flat days, where two separate exchanges can genuinely
+          differ on the sign of a tiny move. That is the honest answer: the day had no clear
+          direction, so the contract refuses to invent one.
         </p>
         <p>
           In a relative-return market, a tie for first place on <em>either</em> source also refunds
@@ -106,6 +106,10 @@ export function HowItWorksPage() {
           no external dependency, so it cannot itself fail — your stake cannot be locked forever by
           a feed that disappeared.
         </p>
+        <p>
+          Payouts and refunds are sent as their own transaction once the claim finalizes, so the
+          GEN usually lands in your wallet a minute or two after the claim succeeds.
+        </p>
       </Rule>
 
       <Rule title="The prices on this site do not settle anything">
@@ -127,6 +131,11 @@ export function HowItWorksPage() {
           deliberately.
         </p>
         <p>Positions close the moment the GMT+1 day begins.</p>
+        <p>
+          If a stake cannot be accepted — say it would take you over 6 GEN, or it reaches the
+          contract after the cutoff — the contract sends your GEN straight back instead of keeping
+          it. Nothing is ever held without a position to claim it by.
+        </p>
       </Rule>
 
       <Rule title="Anyone can resolve a market">

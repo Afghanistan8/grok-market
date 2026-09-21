@@ -97,7 +97,7 @@ export function MarketsPage() {
       {!isConfigured ? (
         <Empty
           title="No contract configured"
-          hint="Set VITE_GROKMARKET_CONTRACT_ADDRESS to a deployed GrokMarket address."
+          hint="Set the contract address in src/lib/env.ts."
         />
       ) : query.isLoading ? (
         <Loading label="Reading the board" />

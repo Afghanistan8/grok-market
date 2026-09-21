@@ -12,8 +12,11 @@ export const network = {
   faucet: "https://studio.genlayer.com",
 } as const;
 
-/** The live deployment on studionet. */
-const CONTRACT_ADDRESS = "0x1f774eb175CD0A1E82AB61422Fa231AD1bAC6742";
+/**
+ * The live deployment on studionet. Fixed in code on purpose: an environment
+ * variable could silently point a hosted build at a stale contract.
+ */
+const CONTRACT_ADDRESS = "0x7b5701387e5154D1942cd2cE3B39cA51b39a39FF";
 
 function read(key: string, fallback: string): string {
   const raw = import.meta.env[key as keyof ImportMetaEnv];
@@ -23,8 +26,7 @@ function read(key: string, fallback: string): string {
 }
 
 export const env = {
-  // Overridable only so a redeploy of the contract does not need a code change.
-  contractAddress: read("VITE_GROKMARKET_CONTRACT_ADDRESS", CONTRACT_ADDRESS) as `0x${string}`,
+  contractAddress: CONTRACT_ADDRESS as `0x${string}`,
   rpcUrl: network.rpcUrl,
   walletConnectProjectId: read("VITE_WALLETCONNECT_PROJECT_ID", ""),
   defaultRpc: network.rpcUrl,

@@ -49,6 +49,8 @@ export function MarketDetailPage() {
   });
 
   const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ["book", marketId] });
+    queryClient.invalidateQueries({ queryKey: ["stats"] });
     queryClient.invalidateQueries({ queryKey: ["market", marketId] });
     queryClient.invalidateQueries({ queryKey: ["evidence", marketId] });
     queryClient.invalidateQueries({ queryKey: ["claimable", marketId] });
@@ -215,7 +217,7 @@ export function MarketDetailPage() {
                 onClick={() => resolve.mutate()}
               >
                 {resolve.isPending
-                  ? "Resolving..."
+                  ? "Validators are fetching prices..."
                   : isConnected
                     ? pastDeadline
                       ? "Trigger refund"
@@ -245,8 +247,14 @@ export function MarketDetailPage() {
                 disabled={!isConnected || claim.isPending}
                 onClick={() => claim.mutate()}
               >
-                {claim.isPending ? "Claiming..." : "Claim"}
+                {claim.isPending ? "Waiting for validators..." : "Claim"}
               </button>
+              {claim.isSuccess ? (
+                <p className="mt-3 text-xs text-emerald-300">
+                  Claimed. The GEN is sent once the transaction finalizes, usually within a minute
+                  or two.
+                </p>
+              ) : null}
               {claim.isError ? (
                 <div className="mt-3">
                   <ErrorNote message={humanError(claim.error)} />

@@ -12,16 +12,22 @@ import type { ActivityItem } from "../lib/types";
 const TONE: Record<ActivityItem["kind"], string> = {
   CREATE: "text-sky-300 border-sky-400/30 bg-sky-400/10",
   STAKE: "text-amber-300 border-amber-400/30 bg-amber-400/10",
+  REFUND: "text-zinc-300 border-zinc-500/30 bg-zinc-500/10",
   RESOLVE: "text-fuchsia-300 border-fuchsia-400/30 bg-fuchsia-400/10",
   CLAIM: "text-emerald-300 border-emerald-400/30 bg-emerald-400/10",
 };
 
 function describe(item: ActivityItem): string {
   switch (item.kind) {
-    case "CREATE":
-      return `opened a ${item.detail} market`;
+    case "CREATE": {
+      const [kind, category] = item.detail.split("/");
+      const label = kind === "B" ? "relative-return" : "direction";
+      return `opened a ${category ?? ""} ${label} market`;
+    }
     case "STAKE":
       return `staked ${gen(item.amount)} GEN on ${item.detail}`;
+    case "REFUND":
+      return `was refunded ${gen(item.amount)} GEN (${item.detail})`;
     case "RESOLVE":
       return item.detail === "TERMINAL_REFUND"
         ? "triggered the terminal refund"

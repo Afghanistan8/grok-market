@@ -106,7 +106,7 @@ export interface Evidence {
 
 export interface ActivityItem {
   seq: number;
-  kind: "CREATE" | "STAKE" | "RESOLVE" | "CLAIM";
+  kind: "CREATE" | "STAKE" | "REFUND" | "RESOLVE" | "CLAIM";
   market_id: number;
   actor: string;
   detail: string;

@@ -16,7 +16,7 @@ export const PAGE_SIZE = 50;
 
 class NotConfiguredError extends Error {
   constructor() {
-    super("VITE_GROKMARKET_CONTRACT_ADDRESS is not set");
+    super("No contract address is set in src/lib/env.ts");
     this.name = "NotConfiguredError";
   }
 }
@@ -74,27 +74,85 @@ interface WriteContext {
   provider: unknown;
 }
 
+/** What a decided write returned. */
+export interface WriteOutcome {
+  hash: string;
+  /** The contract method's return value, decoded to a string. */
+  value: string;
+}
+
+/** Thrown when validators decided the call and the contract reverted it. */
+export class ContractRevert extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ContractRevert";
+  }
+}
+
+interface LeaderResult {
+  execution_result?: string;
+  result?: { status?: string; payload?: unknown };
+}
+
+/** Studio receipts wrap return values as ``{ readable: "<json text>" }``. */
+function decodeReturn(payload: unknown): string {
+  if (payload && typeof payload === "object" && "readable" in payload) {
+    const readable = String((payload as { readable: unknown }).readable);
+    try {
+      const parsed = JSON.parse(readable);
+      return typeof parsed === "string" ? parsed : String(parsed);
+    } catch {
+      return readable;
+    }
+  }
+  return payload === undefined || payload === null ? "" : String(payload);
+}
+
+/**
+ * Submits a write and waits for validators to decide it.
+ *
+ * A submitted transaction is not a successful one: the contract can still
+ * revert it after consensus. So this waits for the decision, then reads the
+ * leader's execution result and either returns the method's return value or
+ * throws the contract's own revert message.
+ */
 async function send(
   ctx: WriteContext,
   functionName: string,
   args: unknown[],
   value: bigint,
-): Promise<string> {
+): Promise<WriteOutcome> {
   if (!isConfigured) throw new NotConfiguredError();
   const client = writeClient(ctx.account, ctx.provider);
-  const hash = await client.writeContract({
-    address: env.contractAddress as `0x${string}`,
-    functionName,
-    args: args as never,
-    value,
-  });
-  return String(hash);
+  const hash = String(
+    await client.writeContract({
+      address: env.contractAddress as `0x${string}`,
+      functionName,
+      args: args as never,
+      value,
+    }),
+  ) as `0x${string}`;
+
+  const receipt = (await client.waitForTransactionReceipt({
+    hash: hash as never,
+    status: "ACCEPTED" as never,
+    interval: 3000,
+    retries: 100,
+  })) as unknown as { consensus_data?: { leader_receipt?: LeaderResult[] } };
+
+  const leader = receipt.consensus_data?.leader_receipt?.[0];
+  if (!leader) throw new ContractRevert("Validators did not return a result for this transaction.");
+  if (leader.execution_result !== "SUCCESS") {
+    throw new ContractRevert(decodeReturn(leader.result?.payload) || "The contract rejected this transaction.");
+  }
+  return { hash, value: decodeReturn(leader.result?.payload) };
 }
 
 export const writes = {
   createMarket: (ctx: WriteContext, kind: string, category: string, asset: string, day: string) =>
     send(ctx, "create_market", [kind, category, asset, day], 0n),
 
+  /** Returns ``STAKED:<total wei>`` or ``REFUNDED:<reason>``. */
   takePosition: (ctx: WriteContext, marketId: number, side: string, amount: bigint) =>
     send(ctx, "take_position", [marketId, side], amount),
 

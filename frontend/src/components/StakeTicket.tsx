@@ -31,14 +31,16 @@ export function StakeTicket({
   const resulting = held + value;
 
   const mutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (stake: bigint) => {
       const ctx = await getContext();
-      return writes.takePosition(ctx, market.id, locked ?? side, value);
+      return writes.takePosition(ctx, market.id, locked ?? side, stake);
     },
-    onSuccess: () => {
+    onSuccess: (outcome) => {
       queryClient.invalidateQueries({ queryKey: ["market", market.id] });
       queryClient.invalidateQueries({ queryKey: ["position", market.id] });
-      setAmount("2");
+      queryClient.invalidateQueries({ queryKey: ["book", market.id] });
+      queryClient.invalidateQueries({ queryKey: ["stats"] });
+      if (outcome.value.startsWith("STAKED:")) setAmount("2");
     },
   });
 
@@ -67,7 +69,7 @@ export function StakeTicket({
         <span className="font-mono text-[11px] text-zinc-600">2–6 GEN</span>
       </div>
 
-      <div className={`mt-4 grid gap-2 ${sides.length > 2 ? "grid-cols-2" : "grid-cols-2"}`}>
+      <div className="mt-4 grid grid-cols-2 gap-2">
         {sides.map((option) => {
           const active = (locked ?? side) === option;
           const disabled = locked !== null && locked !== option;
@@ -134,10 +136,14 @@ export function StakeTicket({
       <button
         type="button"
         disabled={!isConnected || problem !== null || mutation.isPending}
-        onClick={() => mutation.mutate()}
+        onClick={() => mutation.mutate(value)}
         className="btn btn-primary mt-4 w-full"
       >
-        {mutation.isPending ? "Confirming..." : isConnected ? "Stake" : "Connect a wallet"}
+        {mutation.isPending
+          ? "Waiting for validators..."
+          : isConnected
+            ? "Stake"
+            : "Connect a wallet"}
       </button>
 
       {problem && isConnected ? (
@@ -148,8 +154,23 @@ export function StakeTicket({
           <ErrorNote message={humanError(mutation.error)} />
         </div>
       ) : null}
-      {mutation.isSuccess ? (
-        <p className="mt-3 text-xs text-emerald-300">Position submitted.</p>
+      {mutation.isPending ? (
+        <p className="mt-3 text-xs text-zinc-500">
+          Confirm in your wallet, then validators decide the transaction. This usually takes under
+          a minute.
+        </p>
+      ) : null}
+      {mutation.isSuccess && mutation.data.value.startsWith("STAKED:") ? (
+        <p className="mt-3 text-xs text-emerald-300">
+          Position recorded. Your total stake is {gen(mutation.data.value.slice(7))} GEN.
+        </p>
+      ) : null}
+      {mutation.isSuccess && mutation.data.value.startsWith("REFUNDED:") ? (
+        <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+          The contract did not accept this stake ({mutation.data.value.slice(9)}), so it is sending
+          your {gen(mutation.variables ?? 0n)} GEN back. The refund lands once the transaction finalizes, usually
+          within a minute or two.
+        </div>
       ) : null}
     </div>
   );
