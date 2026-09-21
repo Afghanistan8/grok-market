@@ -1,4 +1,5 @@
-# Runtime tooling for deploying and interacting with Grok-Market.
+# Runtime tooling for interacting with Grok-Market from Python.
 # The Intelligent Contract itself runs inside GenVM and pulls its SDK from the
-# runner named in the contract header, so it has no pip dependencies.
+# runner named in its header, so it has no pip dependencies.
+# genlayer-test 0.29.2 requires genlayer-py >=0.13,<0.17.
 genlayer-py==0.16.3

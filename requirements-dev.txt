@@ -2,6 +2,9 @@
 
 # Direct-mode testing. gltest downloads the real py-genlayer runner named in
 # the contract header, so tests execute against the production SDK rather than
-# a hand written stand-in.
+# a hand written stand-in. Versions are the ones the suite was verified with.
 genlayer-test==0.29.2
-pytest==8.3.4
+pytest==9.1.1
+
+# GenLayer's contract linter: genvm-lint check contracts/GrokMarket.py
+genvm-linter==0.11.0

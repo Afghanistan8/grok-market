@@ -7,8 +7,8 @@ from conftest import (
     assert_reverts,
     binance_body,
     binance_simple,
-    coingecko_body,
-    coingecko_simple,
+    coinbase_body,
+    coinbase_simple,
     day_index,
     day_string,
     day_string_us,
@@ -71,7 +71,7 @@ def test_non_utf8_body_is_external(gm):
 
 @pytest.mark.parametrize(
     "reader",
-    ["coingecko_window", "binance_window", "stockanalysis_day", "nasdaq_day"],
+    ["coinbase_window", "binance_window", "stockanalysis_day", "nasdaq_day"],
 )
 def test_malformed_json_is_external(gm, reader):
     fn = getattr(gm, reader)
@@ -82,78 +82,100 @@ def test_malformed_json_is_external(gm, reader):
 
 
 # ---------------------------------------------------------------------------
-# CoinGecko
+# Coinbase
 # ---------------------------------------------------------------------------
 
 
-def test_coingecko_takes_first_and_last_in_window_sample(gm):
-    hourly = ["100.0"] + ["555.0"] * 22 + ["110.0"]
-    body = coingecko_body(WIN_START, hourly)
-    assert gm.coingecko_window(body, WIN_START, WIN_END) == (scaled("100.0"), scaled("110.0"))
+def test_coinbase_url_asks_for_exactly_the_gmt_plus_one_day(gm):
+    url = gm.coinbase_url("BTC", WIN_START, WIN_END)
+    assert url.startswith("https://api.exchange.coinbase.com/products/BTC-USD/candles?")
+    assert "granularity=3600" in url
+    # 2026-03-10 GMT+1 starts at 2026-03-09 23:00 UTC; the last candle starts at 22:00 UTC.
+    assert "start=2026-03-09T23:00:00Z" in url
+    assert "end=2026-03-10T22:00:00Z" in url
 
 
-def test_coingecko_ignores_samples_outside_the_window(gm):
-    """The request pads by an hour each side; padding must not become open/close."""
-    entries = []
-    entries.append("[%d,%s]" % ((WIN_START - HOUR) * 1000, "1.0"))  # before
-    for i in range(24):
-        entries.append("[%d,%s]" % ((WIN_START + i * HOUR) * 1000, "100.0" if i == 0 else "110.0"))
-    entries.append("[%d,%s]" % (WIN_END * 1000, "999.0"))  # at the exclusive end
-    entries.append("[%d,%s]" % ((WIN_END + HOUR) * 1000, "999.0"))  # after
-    body = '{"prices":[' + ",".join(entries) + "]}"
-    assert gm.coingecko_window(body, WIN_START, WIN_END) == (scaled("100.0"), scaled("110.0"))
+def test_format_iso_utc_matches_datetime(gm):
+    from datetime import datetime, timezone
+
+    for epoch in (0, WIN_START, WIN_END - 1, 1790031600, 951782400):  # 951782400 = 2000-02-29
+        expected = datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        assert gm.format_iso_utc(epoch) == expected
 
 
-def test_coingecko_is_order_independent(gm):
-    """Open and close are chosen by timestamp, not by array position."""
-    hourly = ["100.0"] + ["555.0"] * 22 + ["110.0"]
-    forward = coingecko_body(WIN_START, hourly)
-    import json
+def test_coinbase_uses_first_open_and_last_close(gm):
+    body = coinbase_simple(WIN_START, "100.0", "110.0")
+    assert gm.coinbase_window(body, WIN_START, WIN_END) == (scaled("100.0"), scaled("110.0"))
 
-    reversed_items = list(reversed(json.loads(forward)["prices"]))
-    body = '{"prices":[' + ",".join("[%d,%s]" % (t, p) for t, p in reversed_items) + "]}"
-    assert gm.coingecko_window(body, WIN_START, WIN_END) == gm.coingecko_window(
-        forward, WIN_START, WIN_END
+
+def test_coinbase_is_order_independent(gm):
+    """Coinbase returns newest first; selection must be by timestamp, not position."""
+    bars = [("100.0", "1.0")] + [("1.0", "1.0")] * 22 + [("1.0", "110.0")]
+    newest_first = coinbase_body(WIN_START, bars, newest_first=True)
+    oldest_first = coinbase_body(WIN_START, bars, newest_first=False)
+    assert newest_first != oldest_first
+    assert gm.coinbase_window(newest_first, WIN_START, WIN_END) == gm.coinbase_window(
+        oldest_first, WIN_START, WIN_END
     )
 
 
-def test_coingecko_missing_opening_hour_is_external(gm):
-    # First sample lands three hours into the day.
-    entries = [
-        "[%d,%s]" % ((WIN_START + (i + 3) * HOUR) * 1000, "100.0") for i in range(20)
-    ]
-    body = '{"prices":[' + ",".join(entries) + "]}"
+def test_coinbase_ignores_candles_outside_the_day(gm):
+    bars = [("100.0", "1.0")] + [("1.0", "1.0")] * 22 + [("1.0", "110.0")]
+    rows = coinbase_body(WIN_START, bars)[1:-1]
+    body = "[[%d,1,1,999,999,1],%s,[%d,1,1,999,999,1]]" % (WIN_END, rows, WIN_START - HOUR)
+    assert gm.coinbase_window(body, WIN_START, WIN_END) == (scaled("100.0"), scaled("110.0"))
+
+
+def test_coinbase_requires_all_24_hourly_candles(gm):
+    body = coinbase_body(WIN_START, [("1.0", "1.0")] * 23)
     with pytest.raises(Exception) as excinfo:
-        gm.coingecko_window(body, WIN_START, WIN_END)
-    assert_reverts(excinfo, "EXTERNAL:", "opening hour")
+        gm.coinbase_window(body, WIN_START, WIN_END)
+    assert_reverts(excinfo, "EXTERNAL:", "23 of 24")
 
 
-def test_coingecko_missing_closing_hours_is_external(gm):
-    entries = ["[%d,%s]" % ((WIN_START + i * HOUR) * 1000, "100.0") for i in range(10)]
-    body = '{"prices":[' + ",".join(entries) + "]}"
+def test_coinbase_missing_first_hour_is_external(gm):
+    body = coinbase_body(WIN_START + HOUR, [("1.0", "1.0")] * 23)
     with pytest.raises(Exception) as excinfo:
-        gm.coingecko_window(body, WIN_START, WIN_END)
-    assert_reverts(excinfo, "EXTERNAL:", "closing hour")
-
-
-def test_coingecko_no_samples_in_window_is_external(gm):
-    body = '{"prices":[[%d,1.0]]}' % ((WIN_START - 10 * HOUR) * 1000)
-    with pytest.raises(Exception) as excinfo:
-        gm.coingecko_window(body, WIN_START, WIN_END)
+        gm.coinbase_window(body, WIN_START, WIN_END)
     assert_reverts(excinfo, "EXTERNAL:")
 
 
-def test_coingecko_empty_prices_is_external(gm):
+def test_coinbase_utc_aligned_day_is_rejected(gm):
+    """A UTC calendar day is an hour off the GMT+1 day and must not be accepted."""
+    body = coinbase_body(WIN_START + HOUR, [("1.0", "1.0")] * 24)
     with pytest.raises(Exception) as excinfo:
-        gm.coingecko_window('{"prices":[]}', WIN_START, WIN_END)
-    assert_reverts(excinfo, "EXTERNAL:", "no prices")
-
-
-def test_coingecko_rejects_a_non_positive_price(gm):
-    hourly = ["0"] + ["1.0"] * 22 + ["110.0"]
-    with pytest.raises(Exception) as excinfo:
-        gm.coingecko_window(coingecko_body(WIN_START, hourly), WIN_START, WIN_END)
+        gm.coinbase_window(body, WIN_START, WIN_END)
     assert_reverts(excinfo, "EXTERNAL:")
+
+
+def test_coinbase_error_object_is_external(gm):
+    with pytest.raises(Exception) as excinfo:
+        gm.coinbase_window('{"message":"NotFound"}', WIN_START, WIN_END)
+    assert_reverts(excinfo, "EXTERNAL:", "not a list")
+
+
+def test_coinbase_malformed_candle_is_external(gm):
+    with pytest.raises(Exception) as excinfo:
+        gm.coinbase_window("[[1,2]]", WIN_START, WIN_END)
+    assert_reverts(excinfo, "EXTERNAL:", "malformed")
+
+
+def test_coinbase_rejects_a_non_positive_price(gm):
+    body = coinbase_body(WIN_START, [("0", "1.0")] + [("1.0", "1.0")] * 23)
+    with pytest.raises(Exception) as excinfo:
+        gm.coinbase_window(body, WIN_START, WIN_END)
+    assert_reverts(excinfo, "EXTERNAL:")
+
+
+def test_coinbase_and_binance_measure_the_same_two_instants(gm):
+    """Regression guard: both crypto sources report the price at the window's
+    start and at its end. An earlier source measured a 23 hour span and split
+    real days against Binance."""
+    from conftest import binance_simple
+
+    cb = gm.coinbase_window(coinbase_simple(WIN_START, "100.0", "105.0"), WIN_START, WIN_END)
+    bn = gm.binance_window(binance_simple(WIN_START, "100.0", "105.0"), WIN_START, WIN_END)
+    assert cb == bn
 
 
 # ---------------------------------------------------------------------------
@@ -264,11 +286,11 @@ def test_a_weekend_looks_the_same_to_both_stock_feeds(gm):
 # ---------------------------------------------------------------------------
 
 
-def test_coingecko_formatting_differences_do_not_change_the_result(gm):
-    tight = coingecko_simple(WIN_START, "100.0", "110.0")
-    padded = coingecko_simple(WIN_START, "100.00000000", "110.000")
+def test_coinbase_formatting_differences_do_not_change_the_result(gm):
+    tight = coinbase_simple(WIN_START, "100.0", "110.0")
+    padded = coinbase_simple(WIN_START, "100.00000000", "110.000")
     assert tight != padded
-    assert gm.coingecko_window(tight, WIN_START, WIN_END) == gm.coingecko_window(
+    assert gm.coinbase_window(tight, WIN_START, WIN_END) == gm.coinbase_window(
         padded, WIN_START, WIN_END
     )
 

@@ -3,13 +3,16 @@
 # The direct-mode suite (tests/direct, tests/consensus) never touches a network:
 # it loads the real py-genlayer runner named in the contract header and runs the
 # contract in-process. These entries only matter for `gltest` runs against a live
-# node, selected with `--network testnet_bradbury`.
+# node, selected with `--network <name>`.
 #
-# Bradbury must be reached through the GenLayer RPC host below. The zkSync-OS
-# ChainList host rate limits eth_sendRawTransaction with error -32005.
+# The live deployment is on studionet. Bradbury currently rejects contract
+# deploys at eth_estimateGas (see SPEC.md), so it is listed for reference only.
 networks:
   default: localnet
 
+  studionet:
+    url: https://studio.genlayer.com/api
+    id: 61999
   testnet_bradbury:
     url: https://rpc-bradbury.genlayer.com
     id: 4221

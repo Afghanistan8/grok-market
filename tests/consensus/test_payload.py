@@ -52,7 +52,7 @@ def test_payload_has_the_documented_shape(gm):
     assert fields[1] == "A"
     assert fields[2] == "CRYPTO"
     assert fields[3] == "BTC"
-    assert fields[4] == "coingecko"
+    assert fields[4] == "coinbase"
     assert fields[5] == "binance"
     assert fields[6] == str(IDX)
     assert fields[7] == "BTC:%d:%d" % (s("100.0"), s("110.0"))

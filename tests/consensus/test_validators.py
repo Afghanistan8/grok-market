@@ -22,8 +22,8 @@ from conftest import (
     assert_reverts,
     binance_body,
     binance_simple,
-    coingecko_body,
-    coingecko_simple,
+    coinbase_body,
+    coinbase_simple,
     day_index,
     day_string,
     day_string_us,
@@ -53,8 +53,8 @@ def leader_view(vm, open_price="100.0", close_price="110.0"):
     """What the leader fetched: tidy, exactly formatted numbers."""
     vm.clear_mocks()
     vm.mock_web(
-        r"coins/bitcoin/market_chart",
-        {"method": "GET", "status": 200, "body": coingecko_simple(WIN_START, open_price, close_price)},
+        r"products/BTC-USD/candles",
+        {"method": "GET", "status": 200, "body": coinbase_simple(WIN_START, open_price, close_price)},
     )
     vm.mock_web(
         r"symbol=BTCUSDT&",
@@ -65,27 +65,27 @@ def leader_view(vm, open_price="100.0", close_price="110.0"):
 def validator_view(vm, open_price="100.0", close_price="110.0"):
     """What a validator fetched moments later: different bytes, same numbers.
 
-    Trailing zeros differ, the intermediate hourly samples differ entirely, and
-    CoinGecko's sample timestamps are offset by a few hundred milliseconds.
+    Trailing zeros differ, every intermediate candle differs, and Coinbase's
+    rows arrive oldest first instead of newest first.
     """
     vm.clear_mocks()
-    hourly = [open_price + "000"] + ["%d.5" % (500 + i) for i in range(22)] + [close_price + "00"]
-    bars = (
+    cb_bars = (
+        [(open_price + "000", "7.25")]
+        + [("%d.5" % (500 + i), "%d.25" % (600 + i)) for i in range(22)]
+        + [("8.5", close_price + "00")]
+    )
+    bn_bars = (
         [(open_price + "0", "7.25")]
         + [("%d.5" % (300 + i), "%d.25" % (400 + i)) for i in range(22)]
         + [("9.5", close_price + "000")]
     )
     vm.mock_web(
-        r"coins/bitcoin/market_chart",
-        {
-            "method": "GET",
-            "status": 200,
-            "body": coingecko_body(WIN_START, hourly, sample_ms_offset=137),
-        },
+        r"products/BTC-USD/candles",
+        {"method": "GET", "status": 200, "body": coinbase_body(WIN_START, cb_bars, newest_first=False)},
     )
     vm.mock_web(
         r"symbol=BTCUSDT&",
-        {"method": "GET", "status": 200, "body": binance_body(WIN_START, bars)},
+        {"method": "GET", "status": 200, "body": binance_body(WIN_START, bn_bars)},
     )
 
 
@@ -111,11 +111,11 @@ def test_byte_different_bodies_normalise_to_the_same_payload(market, vm, account
     market_id = open_market(market, vm, accounts)
     warp(vm, WIN_END + 60)
 
-    leader_bytes = coingecko_simple(WIN_START, "100.0", "110.0")
-    validator_bytes = coingecko_body(
+    leader_bytes = coinbase_simple(WIN_START, "100.0", "110.0")
+    validator_bytes = coinbase_body(
         WIN_START,
-        ["100.0000"] + ["%d.5" % (500 + i) for i in range(22)] + ["110.000"],
-        sample_ms_offset=137,
+        [("100.0000", "7.25")] + [("%d.5" % (500 + i), "1.0") for i in range(22)] + [("8.5", "110.000")],
+        newest_first=False,
     )
     assert leader_bytes != validator_bytes, "the two nodes must see different bytes"
 
@@ -174,7 +174,7 @@ def test_the_agreed_payload_is_exactly_what_gets_stored(market, vm, accounts):
 def test_a_failing_source_reverts_and_writes_nothing(market, vm, accounts, status, prefix):
     market_id = open_market(market, vm, accounts)
     vm.clear_mocks()
-    vm.mock_web(r"coins/bitcoin/market_chart", {"method": "GET", "status": status, "body": "{}"})
+    vm.mock_web(r"products/BTC-USD/candles", {"method": "GET", "status": status, "body": "{}"})
     vm.mock_web(
         r"symbol=BTCUSDT&",
         {"method": "GET", "status": 200, "body": binance_simple(WIN_START, "100.0", "110.0")},
@@ -196,8 +196,8 @@ def test_an_incomplete_window_reverts_external_and_stays_retryable(market, vm, a
     market_id = open_market(market, vm, accounts)
     vm.clear_mocks()
     vm.mock_web(
-        r"coins/bitcoin/market_chart",
-        {"method": "GET", "status": 200, "body": coingecko_simple(WIN_START, "100.0", "110.0")},
+        r"products/BTC-USD/candles",
+        {"method": "GET", "status": 200, "body": coinbase_simple(WIN_START, "100.0", "110.0")},
     )
     # Binance is missing the final hour of the day.
     vm.mock_web(
@@ -220,7 +220,7 @@ def test_an_incomplete_window_reverts_external_and_stays_retryable(market, vm, a
 def test_resolution_is_retryable_by_anyone(market, vm, accounts):
     market_id = open_market(market, vm, accounts)
     vm.clear_mocks()
-    vm.mock_web(r"coins/bitcoin/market_chart", {"method": "GET", "status": 429, "body": ""})
+    vm.mock_web(r"products/BTC-USD/candles", {"method": "GET", "status": 429, "body": ""})
     vm.mock_web(r"symbol=BTCUSDT&", {"method": "GET", "status": 429, "body": ""})
     warp(vm, WIN_END + 60)
     with pytest.raises(Exception):
@@ -285,7 +285,7 @@ def test_kind_b_tie_on_one_source_refunds_everyone(market, vm, accounts):
     market.take_position(market_id, "BTC")
     vm.value = 0
 
-    # CoinGecko sees BTC and ETH dead level at the top.
+    # Coinbase sees BTC and ETH dead level at the top.
     mock_relative(vm, ["105", "105", "99", "102"], ["106", "105", "99", "102"])
     warp(vm, WIN_END + 60)
     assert market.resolve_market(market_id) == "INCONCLUSIVE"

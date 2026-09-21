@@ -81,18 +81,23 @@ def warp(vm, epoch_seconds: int) -> str:
 # ---------------------------------------------------------------------------
 
 
-def coingecko_body(win_start: int, hourly, sample_ms_offset: int = 0) -> str:
-    """``hourly`` is 24 decimal strings, one per hour of the GMT+1 day."""
-    items = []
-    for i, price in enumerate(hourly):
-        ts = (win_start + i * HOUR) * 1000 + sample_ms_offset
-        items.append("[%d,%s]" % (ts, price))
-    return '{"prices":[' + ",".join(items) + "]}"
+def coinbase_body(win_start: int, bars, newest_first: bool = True) -> str:
+    """``bars`` is a list of (open, close) decimal-string pairs, one per hour.
+
+    Rows are ``[time, low, high, open, close, volume]``. Coinbase returns them
+    newest first, so that is the default.
+    """
+    rows = []
+    for i, (o, c) in enumerate(bars):
+        rows.append("[%d,%s,%s,%s,%s,1.5]" % (win_start + i * HOUR, o, c, o, c))
+    if newest_first:
+        rows.reverse()
+    return "[" + ",".join(rows) + "]"
 
 
-def coingecko_simple(win_start: int, open_price: str, close_price: str) -> str:
-    hourly = [open_price] + ["1.0"] * 22 + [close_price]
-    return coingecko_body(win_start, hourly)
+def coinbase_simple(win_start: int, open_price: str, close_price: str) -> str:
+    bars = [(open_price, "1.0")] + [("1.0", "1.0")] * 22 + [("1.0", close_price)]
+    return coinbase_body(win_start, bars)
 
 
 def binance_body(win_start: int, bars) -> str:
@@ -144,7 +149,7 @@ def nasdaq_body(rows) -> str:
 # Mock wiring
 # ---------------------------------------------------------------------------
 
-COINGECKO_IDS = {"BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana", "XRP": "ripple"}
+COINBASE_PRODUCTS = {"BTC": "BTC-USD", "ETH": "ETH-USD", "SOL": "SOL-USD", "XRP": "XRP-USD"}
 BINANCE_PAIRS = {"BTC": "BTCUSDT", "ETH": "ETHUSDT", "SOL": "SOLUSDT", "XRP": "XRPUSDT"}
 CRYPTO_ASSETS = ("BTC", "ETH", "SOL", "XRP")
 STOCKS_ASSETS = ("AAPL", "MSFT", "NVDA", "TSLA")
@@ -153,8 +158,8 @@ STOCKS_ASSETS = ("AAPL", "MSFT", "NVDA", "TSLA")
 def mock_crypto(vm, asset, day_str, a_open, a_close, b_open, b_close, status=200):
     win_start, _ = window(day_str)
     vm.mock_web(
-        r"coins/%s/market_chart" % COINGECKO_IDS[asset],
-        {"method": "GET", "status": status, "body": coingecko_simple(win_start, a_open, a_close)},
+        r"products/%s/candles" % COINBASE_PRODUCTS[asset],
+        {"method": "GET", "status": status, "body": coinbase_simple(win_start, a_open, a_close)},
     )
     vm.mock_web(
         r"symbol=%s&" % BINANCE_PAIRS[asset],

@@ -196,3 +196,32 @@ def test_creating_a_market_writes_an_activity_record(before, accounts):
     assert activity["total"] == 1
     assert activity["items"][0]["kind"] == "CREATE"
     assert activity["items"][0]["detail"] == "A/CRYPTO"
+
+
+@pytest.mark.parametrize("day_str,weekday", [("2026-03-14", "Saturday"), ("2026-03-15", "Sunday")])
+def test_stock_markets_cannot_target_a_weekend(market, vm, day_str, weekday):
+    from datetime import date
+
+    assert date.fromisoformat(day_str).strftime("%A") == weekday
+    warp(vm, window(day_str)[0] - 5 * 86400)
+    with pytest.raises(Exception) as excinfo:
+        market.create_market("A", "STOCKS", "AAPL", day_str)
+    assert_reverts(excinfo, "EXPECTED:", "Saturday or Sunday")
+    with pytest.raises(Exception) as excinfo:
+        market.create_market("B", "STOCKS", "", day_str)
+    assert_reverts(excinfo, "EXPECTED:", "Saturday or Sunday")
+
+
+def test_crypto_markets_can_target_a_weekend(market, vm):
+    """Crypto trades every day, so the weekend rule applies to stocks only."""
+    warp(vm, window("2026-03-14")[0] - 5 * 86400)
+    assert int(market.create_market("A", "CRYPTO", "BTC", "2026-03-14")) == 1
+
+
+def test_weekday_of_matches_python(gm):
+    from datetime import date
+
+    for offset in range(-400, 400, 37):
+        day = gm.parse_day_string("2026-03-10") + offset
+        expected = date.fromordinal(day + date(1970, 1, 1).toordinal()).weekday()
+        assert gm.weekday_of(day) == expected

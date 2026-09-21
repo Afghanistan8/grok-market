@@ -68,10 +68,10 @@ PAYLOAD_FIELDS = 12
 CRYPTO_ASSETS = ("BTC", "ETH", "SOL", "XRP")
 STOCKS_ASSETS = ("AAPL", "MSFT", "NVDA", "TSLA")
 
-COINGECKO_IDS = {"BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana", "XRP": "ripple"}
+COINBASE_PRODUCTS = {"BTC": "BTC-USD", "ETH": "ETH-USD", "SOL": "SOL-USD", "XRP": "XRP-USD"}
 BINANCE_PAIRS = {"BTC": "BTCUSDT", "ETH": "ETHUSDT", "SOL": "SOLUSDT", "XRP": "XRPUSDT"}
 
-SRC_COINGECKO = "coingecko"
+SRC_COINBASE = "coinbase"
 SRC_BINANCE = "binance"
 SRC_STOCKANALYSIS = "stockanalysis"
 SRC_NASDAQ = "nasdaq"
@@ -98,7 +98,7 @@ def category_assets(category: str) -> tuple:
 
 def category_sources(category: str) -> tuple:
     if category == CAT_CRYPTO:
-        return (SRC_COINGECKO, SRC_BINANCE)
+        return (SRC_COINBASE, SRC_BINANCE)
     return (SRC_STOCKANALYSIS, SRC_NASDAQ)
 
 
@@ -268,6 +268,11 @@ def parse_iso_utc(s: str) -> int:
     return days * DAY + int(hh) * 3600 + int(mi) * 60 + int(ss) - offset
 
 
+def weekday_of(day_index: int) -> int:
+    """Monday = 0 ... Sunday = 6. 1970-01-01 was a Thursday."""
+    return (day_index + 3) % 7
+
+
 def window_for_day(day_index: int) -> tuple:
     """GMT+1 calendar day -> ``[start, end)`` in Unix seconds."""
     start = day_index * DAY - GMT_PLUS_ONE
@@ -347,14 +352,23 @@ def dec_to_scaled(raw, scale_digits: int = 8) -> int:
 # ---------------------------------------------------------------------------
 
 
-def coingecko_url(asset: str, win_start: int, win_end: int) -> str:
+def format_iso_utc(epoch: int) -> str:
+    """Unix seconds -> ``YYYY-MM-DDTHH:MM:SSZ`` without any datetime library."""
+    days = epoch // DAY
+    rem = epoch - days * DAY
+    return "%sT%02d:%02d:%02dZ" % (format_day(days), rem // 3600, (rem % 3600) // 60, rem % 60)
+
+
+def coinbase_url(asset: str, win_start: int, win_end: int) -> str:
+    # ``end`` is the start time of the last hourly candle, so the request
+    # returns exactly the 24 candles that cover the GMT+1 day.
     return (
-        "https://api.coingecko.com/api/v3/coins/"
-        + COINGECKO_IDS[asset]
-        + "/market_chart/range?vs_currency=usd&from="
-        + str(win_start - HOUR)
-        + "&to="
-        + str(win_end + HOUR)
+        "https://api.exchange.coinbase.com/products/"
+        + COINBASE_PRODUCTS[asset]
+        + "/candles?granularity=3600&start="
+        + format_iso_utc(win_start)
+        + "&end="
+        + format_iso_utc(win_end - HOUR)
     )
 
 
@@ -435,40 +449,34 @@ def _as_int(v) -> int:
     return 0
 
 
-def coingecko_window(text: str, win_start: int, win_end: int) -> tuple:
-    """First sample at/after window start, last sample before window end."""
-    obj = _load_json(text)
-    if not isinstance(obj, dict):
-        _external("coingecko payload is not an object")
-    prices = obj.get("prices")
-    if not isinstance(prices, list) or len(prices) == 0:
-        _external("coingecko returned no prices")
+def coinbase_window(text: str, win_start: int, win_end: int) -> tuple:
+    """24 hourly candles covering the GMT+1 day, selected by timestamp.
 
-    first_ts = -1
-    last_ts = -1
-    open_v = 0
-    close_v = 0
-    for item in prices:
-        if not isinstance(item, list) or len(item) < 2:
-            _external("coingecko sample is malformed")
-        ts = _as_int(item[0]) // 1000
-        if ts < win_start or ts >= win_end:
-            continue
-        if first_ts < 0 or ts < first_ts:
-            first_ts = ts
-            open_v = dec_to_scaled(item[1])
-        if ts > last_ts:
-            last_ts = ts
-            close_v = dec_to_scaled(item[1])
-
-    if first_ts < 0 or last_ts < 0:
-        _external("coingecko has no sample inside the window")
-    if first_ts - win_start > HOUR:
-        _external("coingecko window is missing its opening hour")
-    if win_end - last_ts > 2 * HOUR:
-        _external("coingecko window is missing its closing hour")
+    Coinbase returns ``[time, low, high, open, close, volume]`` rows, newest
+    first. The open is the first candle's open (the price at ``win_start``)
+    and the close is the last candle's close (the price at ``win_end``): the
+    same two instants Binance measures.
+    """
+    rows = _load_json(text)
+    if not isinstance(rows, list):
+        _external("coinbase payload is not a list")
+    by_time = {}
+    for row in rows:
+        if not isinstance(row, list) or len(row) < 5:
+            _external("coinbase candle is malformed")
+        ts = _as_int(row[0])
+        if ts >= win_start and ts < win_end:
+            by_time[ts] = row
+    if len(by_time) != 24:
+        _external("coinbase returned " + str(len(by_time)) + " of 24 hourly candles")
+    first = by_time.get(win_start, None)
+    last = by_time.get(win_end - HOUR, None)
+    if first is None or last is None:
+        _external("coinbase candles do not cover the GMT+1 day")
+    open_v = dec_to_scaled(first[3])
+    close_v = dec_to_scaled(last[4])
     if open_v <= 0 or close_v <= 0:
-        _external("coingecko returned a non-positive price")
+        _external("coinbase returned a non-positive price")
     return (open_v, close_v)
 
 
@@ -655,6 +663,38 @@ def build_payload(
             b_verdict,
             final,
         ]
+    )
+
+
+def fetch_payload(kind: str, category: str, asset: str, day_index: int) -> str:
+    """The non-deterministic read: both sources, every asset, one payload.
+
+    Only ever called from inside ``gl.eq_principle.strict_eq``. The leader and
+    every validator run it independently against their own HTTP responses.
+    """
+    win_start, win_end = window_for_day(day_index)
+    symbols = (asset,) if kind == KIND_DIRECTION else category_assets(category)
+    a_opens = []
+    a_closes = []
+    b_opens = []
+    b_closes = []
+    for sym in symbols:
+        if category == CAT_CRYPTO:
+            ra = gl.nondet.web.get(coinbase_url(sym, win_start, win_end), headers=REQUEST_HEADERS)
+            oa, ca = coinbase_window(classify_response(ra.status, ra.body), win_start, win_end)
+            rb = gl.nondet.web.get(binance_url(sym, win_start, win_end), headers=REQUEST_HEADERS)
+            ob, cb = binance_window(classify_response(rb.status, rb.body), win_start, win_end)
+        else:
+            ra = gl.nondet.web.get(stockanalysis_url(sym, day_index), headers=REQUEST_HEADERS)
+            oa, ca = stockanalysis_day(classify_response(ra.status, ra.body), day_index)
+            rb = gl.nondet.web.get(nasdaq_url(sym, day_index), headers=REQUEST_HEADERS)
+            ob, cb = nasdaq_day(classify_response(rb.status, rb.body), day_index)
+        a_opens.append(oa)
+        a_closes.append(ca)
+        b_opens.append(ob)
+        b_closes.append(cb)
+    return build_payload(
+        kind, category, asset, day_index, symbols, a_opens, a_closes, b_opens, b_closes
     )
 
 
@@ -954,6 +994,10 @@ class Contract(gl.Contract):
                 _expected("kind B markets cover the whole category, pass an empty asset")
 
         day_index = parse_day_string(target_day)
+        if category == CAT_STOCKS and weekday_of(day_index) >= 5:
+            # US equities never have a session on a weekend, so such a market
+            # could only ever end in the terminal refund.
+            _expected("stock markets cannot target a Saturday or Sunday")
         win_start, win_end = window_for_day(day_index)
         now = self._now()
 
@@ -1006,33 +1050,65 @@ class Contract(gl.Contract):
         self._log("CREATE", market_id, kind + "/" + category, 0, now)
         return u256(market_id)
 
-    @gl.public.write.payable
-    def take_position(self, market_id: u256, side: str) -> u256:
-        value = int(gl.message.value)
-        m = self._market_or_revert(market_id)
-        now = self._now()
-
+    def _stake_rejection(self, market_id: int, side: str, value: int, now: int) -> str:
+        """Why a stake cannot be accepted, or "" if it can. Never raises."""
+        m = self.markets.get(u256(market_id), None)
+        if m is None:
+            return "unknown market"
         if m.state != STATE_UNRESOLVED:
-            _expected("market is already resolved")
+            return "market is already resolved"
         if now >= int(m.cutoff_at):
-            _expected("market is closed for new positions")
-
+            return "market is closed for new positions"
         if m.kind == KIND_DIRECTION:
             if side != UP and side != DOWN:
-                _expected("side must be UP or DOWN")
-        else:
-            if side not in category_assets(m.category):
-                _expected("side must be an asset in this category")
+                return "side must be UP or DOWN"
+        elif side not in category_assets(m.category):
+            return "side must be an asset in this category"
 
+        key = str(market_id) + ":" + addr_key(gl.message.sender_address)
+        existing = self.positions.get(key, None)
+        if existing is None:
+            if value < MIN_STAKE:
+                return "first stake must be at least 2 GEN"
+            if value > MAX_STAKE:
+                return "stake must not exceed 6 GEN"
+        else:
+            if existing.side != side:
+                return "cannot switch sides, top up the side you already hold"
+            if value <= 0:
+                return "top up must send value"
+            if int(existing.stake) + value > MAX_STAKE:
+                return "total stake must not exceed 6 GEN"
+        return ""
+
+    @gl.public.write.payable
+    def take_position(self, market_id: u256, side: str) -> str:
+        """Stake on a side. Returns ``STAKED:<total wei>`` or ``REFUNDED:<reason>``.
+
+        GEN attached to a call is credited to the contract even when the call
+        reverts, so a rejected stake must never revert: that would trap the
+        value with no position to claim it by. Instead the value goes straight
+        back to the sender in the same transaction. Only a call that carries no
+        value is allowed to revert, because it has nothing to lose.
+        """
+        value = int(gl.message.value)
+        mid = int(market_id)
+        now = self._now()
         owner = gl.message.sender_address
-        key = str(int(market_id)) + ":" + addr_key(owner)
+
+        reason = self._stake_rejection(mid, side, value, now)
+        if reason != "":
+            if value <= 0:
+                _expected(reason)
+            _Recipient(owner).emit_transfer(value=u256(value))
+            self._log("REFUND", mid, reason, value, now)
+            return "REFUNDED:" + reason
+
+        m = self.markets[u256(mid)]
+        key = str(mid) + ":" + addr_key(owner)
         existing = self.positions.get(key, None)
 
         if existing is None:
-            if value < MIN_STAKE:
-                _expected("first stake must be at least 2 GEN")
-            if value > MAX_STAKE:
-                _expected("stake must not exceed 6 GEN")
             self.positions[key] = PositionRecord(
                 market_id=u256(int(market_id)),
                 owner=owner,
@@ -1041,27 +1117,21 @@ class Contract(gl.Contract):
                 claimed=False,
             )
             pcount = int(m.position_count)
-            self.market_positions[str(int(market_id)) + ":" + str(pcount)] = key
+            self.market_positions[str(mid) + ":" + str(pcount)] = key
             m.position_count = u256(pcount + 1)
 
             ukey = addr_key(owner)
             ucount = int(self.user_position_count.get(ukey, u256(0)))
-            self.user_positions[ukey + ":" + str(ucount)] = u256(int(market_id))
+            self.user_positions[ukey + ":" + str(ucount)] = u256(mid)
             self.user_position_count[ukey] = u256(ucount + 1)
             total = value
         else:
-            if existing.side != side:
-                _expected("cannot switch sides, top up the side you already hold")
-            if value <= 0:
-                _expected("top up must send value")
             total = int(existing.stake) + value
-            if total > MAX_STAKE:
-                _expected("total stake must not exceed 6 GEN")
             existing.stake = u256(total)
 
         self._add_pool(m, side, value)
-        self._log("STAKE", int(market_id), side, value, now)
-        return u256(total)
+        self._log("STAKE", mid, side, value, now)
+        return "STAKED:" + str(total)
 
     @gl.public.write
     def resolve_market(self, market_id: u256) -> str:
@@ -1103,46 +1173,8 @@ class Contract(gl.Contract):
             self._log("RESOLVE", int(market_id), "TERMINAL_REFUND", 0, now)
             return INCONCLUSIVE
 
-        win_start, win_end = window_for_day(day_index)
-        symbols = (asset,) if kind == KIND_DIRECTION else category_assets(category)
-
         def read_sources() -> str:
-            a_opens = []
-            a_closes = []
-            b_opens = []
-            b_closes = []
-            for sym in symbols:
-                if category == CAT_CRYPTO:
-                    ra = gl.nondet.web.get(
-                        coingecko_url(sym, win_start, win_end), headers=REQUEST_HEADERS
-                    )
-                    oa, ca = coingecko_window(
-                        classify_response(ra.status, ra.body), win_start, win_end
-                    )
-                    rb = gl.nondet.web.get(
-                        binance_url(sym, win_start, win_end), headers=REQUEST_HEADERS
-                    )
-                    ob, cb = binance_window(
-                        classify_response(rb.status, rb.body), win_start, win_end
-                    )
-                else:
-                    ra = gl.nondet.web.get(
-                        stockanalysis_url(sym, day_index), headers=REQUEST_HEADERS
-                    )
-                    oa, ca = stockanalysis_day(
-                        classify_response(ra.status, ra.body), day_index
-                    )
-                    rb = gl.nondet.web.get(
-                        nasdaq_url(sym, day_index), headers=REQUEST_HEADERS
-                    )
-                    ob, cb = nasdaq_day(classify_response(rb.status, rb.body), day_index)
-                a_opens.append(oa)
-                a_closes.append(ca)
-                b_opens.append(ob)
-                b_closes.append(cb)
-            return build_payload(
-                kind, category, asset, day_index, symbols, a_opens, a_closes, b_opens, b_closes
-            )
+            return fetch_payload(kind, category, asset, day_index)
 
         payload = gl.eq_principle.strict_eq(read_sources)
 
@@ -1267,7 +1299,7 @@ class Contract(gl.Contract):
                 {
                     "id": CAT_CRYPTO,
                     "assets": list(CRYPTO_ASSETS),
-                    "source_a": SRC_COINGECKO,
+                    "source_a": SRC_COINBASE,
                     "source_b": SRC_BINANCE,
                 },
                 {

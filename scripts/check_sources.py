@@ -9,8 +9,9 @@ asset is the network itself.
     python scripts/check_sources.py --day 2026-09-18
     python scripts/check_sources.py --category STOCKS --verbose
 
-Exit code is 0 only when every checked asset produced an agreeing verdict from
-both of its independent sources.
+Exit code is 0 when every checked asset could be reconstructed from both of its
+sources. A split verdict (the two sources disagree on a near-flat day) is valid
+contract behaviour, not a failure: it settles INCONCLUSIVE and refunds.
 """
 
 import argparse
@@ -76,7 +77,7 @@ def check_asset(gm, category: str, asset: str, day_index: int, verbose: bool) ->
     src_a, src_b = gm.category_sources(category)
 
     if category == "CRYPTO":
-        url_a = gm.coingecko_url(asset, win_start, win_end)
+        url_a = gm.coinbase_url(asset, win_start, win_end)
         url_b = gm.binance_url(asset, win_start, win_end)
     else:
         url_a = gm.stockanalysis_url(asset, day_index)
@@ -92,8 +93,8 @@ def check_asset(gm, category: str, asset: str, day_index: int, verbose: bool) ->
         row[label + "_url"] = url
         try:
             text = gm.classify_response(status, body)
-            if source == "coingecko":
-                open_v, close_v = gm.coingecko_window(text, win_start, win_end)
+            if source == "coinbase":
+                open_v, close_v = gm.coinbase_window(text, win_start, win_end)
             elif source == "binance":
                 open_v, close_v = gm.binance_window(text, win_start, win_end)
             elif source == "stockanalysis":
@@ -233,9 +234,9 @@ def run(gm, args) -> int:
     print("%d/%d of those produced an agreeing verdict" % (readable - disagreed, readable))
     if disagreed:
         print()
-        print("A split is not a bug: on a near-flat day a global average (coingecko)")
-        print("and a single venue pair (binance) can genuinely differ in sign. The")
-        print("contract refuses to pick one, settles INCONCLUSIVE and refunds stakes.")
+        print("A split is not a bug: on a near-flat day two venues (coinbase BTC-USD")
+        print("and binance BTCUSDT) can genuinely differ in sign. The contract refuses")
+        print("to pick one, settles INCONCLUSIVE and refunds every stake.")
     if unreadable:
         print()
         print("Unreadable sources above would make resolve_market revert, leaving the")

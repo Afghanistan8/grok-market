@@ -16,7 +16,7 @@ def test_supported_universe_is_the_locked_catalog(market):
     cats = {c["id"]: c for c in u["categories"]}
     assert cats["CRYPTO"]["assets"] == ["BTC", "ETH", "SOL", "XRP"]
     assert cats["STOCKS"]["assets"] == ["AAPL", "MSFT", "NVDA", "TSLA"]
-    assert cats["CRYPTO"]["source_a"] == "coingecko"
+    assert cats["CRYPTO"]["source_a"] == "coinbase"
     assert cats["CRYPTO"]["source_b"] == "binance"
     assert cats["STOCKS"]["source_a"] == "stockanalysis"
     assert cats["STOCKS"]["source_b"] == "nasdaq"
@@ -112,7 +112,7 @@ def test_disagreeing_sources_refund_everyone(market, vm, accounts):
     market.take_position(mid, "UP")
     vm.value = 0
 
-    # CoinGecko sees a rise, Binance sees a fall.
+    # Coinbase sees a rise, Binance sees a fall.
     mock_crypto(vm, "ETH", DAY_STR, "100.00", "110.00", "100.00", "90.00")
     warp(vm, win_end + 60)
     assert market.resolve_market(mid) == "INCONCLUSIVE"
