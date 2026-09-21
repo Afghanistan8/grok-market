@@ -1,7 +1,7 @@
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { Link } from "@tanstack/react-router";
 
-import { FAUCET } from "../lib/env";
+import { CHAIN_ID, FAUCET, network } from "../lib/env";
 
 const NAV = [
   { to: "/markets", label: "Markets" },
@@ -36,7 +36,7 @@ export function Header() {
         <div className="ml-auto flex items-center gap-2">
           <span className="chip hidden border-zinc-700/70 text-zinc-400 sm:inline-flex">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-            Bradbury · 4221
+            {network.short} · {CHAIN_ID}
           </span>
           <a
             href={FAUCET}

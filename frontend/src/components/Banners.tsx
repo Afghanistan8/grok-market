@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useAccount } from "wagmi";
 
-import { BANNED_RPC_FRAGMENT, CHAIN_ID, env, isConfigured } from "../lib/env";
+import { BANNED_RPC_FRAGMENT, CHAIN_ID, env, hasRpcHazard, isConfigured } from "../lib/env";
 
 /**
  * A wallet that saved the zkSync-OS endpoint for chain 4221 will keep answering
@@ -14,7 +14,8 @@ export function RpcBanner() {
 
   useEffect(() => {
     let cancelled = false;
-    if (!isConnected || !connector) {
+    // Only Bradbury has a ChainList entry that answers -32005.
+    if (!hasRpcHazard || !isConnected || !connector) {
       setBadRpc(null);
       return;
     }
@@ -68,7 +69,7 @@ export function ConfigBanner() {
     <div className="border-b border-amber-500/30 bg-amber-500/10 px-4 py-2.5">
       <p className="mx-auto max-w-6xl text-xs text-amber-200">
         <strong className="font-semibold">No contract address configured.</strong> Deploy{" "}
-        <code className="rounded bg-black/40 px-1">contracts/GrokMarket.py</code> to Bradbury and
+        <code className="rounded bg-black/40 px-1">contracts/GrokMarket.py</code> and
         set <code className="rounded bg-black/40 px-1">VITE_GROKMARKET_CONTRACT_ADDRESS</code>.
         Until then the board stays empty.
       </p>

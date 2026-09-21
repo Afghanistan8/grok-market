@@ -2,11 +2,11 @@ import { defineChain } from "viem";
 import { http, createConfig, injected } from "wagmi";
 import { walletConnect } from "wagmi/connectors";
 
-import { CHAIN_ID, EXPLORER, env } from "./env";
+import { CHAIN_ID, EXPLORER, env, network } from "./env";
 
-export const bradbury = defineChain({
+export const genlayerChain = defineChain({
   id: CHAIN_ID,
-  name: "GenLayer Testnet Bradbury",
+  name: network.name,
   nativeCurrency: { name: "GEN", symbol: "GEN", decimals: 18 },
   rpcUrls: {
     default: { http: [env.rpcUrl] },
@@ -38,9 +38,9 @@ const connectors = [
 ];
 
 export const wagmiConfig = createConfig({
-  chains: [bradbury],
+  chains: [genlayerChain],
   connectors,
-  transports: { [bradbury.id]: http(env.rpcUrl) },
+  transports: { [genlayerChain.id]: http(env.rpcUrl) },
   ssr: false,
 });
 

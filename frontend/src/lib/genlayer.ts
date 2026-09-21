@@ -1,11 +1,22 @@
 import { createClient } from "genlayer-js";
-import { testnetBradbury } from "genlayer-js/chains";
+import * as glChains from "genlayer-js/chains";
 
-import { env } from "./env";
+import { env, network } from "./env";
 
 type EthereumProvider = Parameters<typeof createClient>[0] extends { provider?: infer P }
   ? NonNullable<P>
   : never;
+
+type ChainConfig = NonNullable<Parameters<typeof createClient>[0]>["chain"];
+
+/** The genlayer-js chain definition for the configured network, with our RPC. */
+function chain(): ChainConfig {
+  const base = (glChains as Record<string, unknown>)[network.chainExport] as object;
+  return {
+    ...base,
+    rpcUrls: { default: { http: [env.rpcUrl] } },
+  } as unknown as ChainConfig;
+}
 
 /**
  * Read client. No account, no wallet — every view is a `gen_call`.
@@ -14,16 +25,13 @@ type EthereumProvider = Parameters<typeof createClient>[0] extends { provider?: 
  * the rate-limited zkSync-OS endpoint cannot poison reads.
  */
 export function readClient() {
-  return createClient({
-    chain: { ...testnetBradbury, rpcUrls: { default: { http: [env.rpcUrl] } } },
-    endpoint: env.rpcUrl,
-  });
+  return createClient({ chain: chain(), endpoint: env.rpcUrl });
 }
 
 /** Write client bound to the connected wallet. */
 export function writeClient(account: `0x${string}`, provider: unknown) {
   return createClient({
-    chain: { ...testnetBradbury, rpcUrls: { default: { http: [env.rpcUrl] } } },
+    chain: chain(),
     endpoint: env.rpcUrl,
     account,
     provider: provider as EthereumProvider,

@@ -71,7 +71,42 @@ at all and refunds every stake. It never invents a price.
 
 ---
 
-## Network
+## Live deployment
+
+| | |
+|---|---|
+| Contract | `0x1f774eb175CD0A1E82AB61422Fa231AD1bAC6742` |
+| Network | GenLayer Studio Network (studionet) |
+| Chain ID | 61999 |
+| RPC | `https://studio.genlayer.com/api` |
+
+Verified live after deploy: `get_stats` and `get_supported_universe` return the
+locked catalog, and `create_market` wrote market #1 (BTC, GMT+1 day 2026-09-22)
+with `cutoff_at` exactly `day_index * 86400 - 3600`.
+
+The frontend is network-agnostic — set `VITE_GENLAYER_NETWORK` to `studionet`,
+`bradbury` or `asimov` and the chain id, RPC, explorer and faucet follow.
+
+### Why studionet and not Bradbury
+
+Both other environments were tried first and are currently unusable for this:
+
+- **studio-dev / studio-next** (chain 61997) executes nothing. A 13-line control
+  contract fails there with `invalid_contract runner absent` under every runner
+  alias (`test`, `latest`, and the pinned hash), and so does GenLayer's own
+  documentation example. The docs note this RC environment's availability is not
+  guaranteed.
+- **Bradbury** (chain 4221) rejects the deploy at the L2 layer: `eth_estimateGas`
+  reverts, the CLI falls back to a hard-coded 200 000 gas, and a 54 KB contract
+  needs roughly 870 000 gas of calldata alone, so it fails `intrinsic gas too
+  low`. A 289-byte control contract fails the same way, so this is not a size
+  limit on our side.
+
+Use the **stable** `genlayer` CLI for studionet. The `0.40.0-rc` CLI sends
+consensus-v0.6-shaped transactions that studionet answers with `NO_MAJORITY` and
+zero votes committed.
+
+## Network reference
 
 | Setting | Value |
 |---|---|

@@ -1,4 +1,4 @@
-import { env } from "../lib/env";
+import { env, hasRpcHazard, network } from "../lib/env";
 
 function Rule({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -138,10 +138,10 @@ export function HowItWorksPage() {
 
       <Rule title="Point your wallet at the GenLayer RPC">
         <p>
-          Use <code className="rounded bg-black/40 px-1 text-zinc-300">{env.defaultRpc}</code> for
-          chain 4221.
+          Use <code className="rounded bg-black/40 px-1 text-zinc-300">{env.defaultRpc}</code> for{" "}
+          {network.name} (chain {network.chainId}).
         </p>
-        <p>
+        <p hidden={!hasRpcHazard}>
           ChainList also lists a zkSync-OS host for this chain. That one rate limits transactions
           and answers{" "}
           <code className="rounded bg-black/40 px-1 text-zinc-300">-32005 gas rate limit</code>, so

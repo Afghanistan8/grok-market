@@ -4,7 +4,7 @@ import { Link } from "@tanstack/react-router";
 import { MarketCard } from "../components/MarketCard";
 import { Empty, Loading, Stat } from "../components/Primitives";
 import { api } from "../lib/contract";
-import { isConfigured } from "../lib/env";
+import { isConfigured, network } from "../lib/env";
 import { gen } from "../lib/format";
 
 const STEPS = [
@@ -37,7 +37,7 @@ export function HomePage() {
   return (
     <div className="space-y-14">
       <section className="pt-6">
-        <p className="label">GenLayer Testnet Bradbury</p>
+        <p className="label">{network.name}</p>
         <h1 className="mt-4 max-w-3xl text-4xl leading-tight text-zinc-50 sm:text-5xl">
           A prediction market with{" "}
           <span className="text-amber-400">nobody to trust</span> at settlement.

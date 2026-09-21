@@ -3,10 +3,55 @@
  * missing variable degrades the app instead of breaking a hosted deploy.
  */
 
-const DEFAULT_RPC = "https://rpc-bradbury.genlayer.com";
-
 /** ChainList also lists this host for chain 4221. It rate limits writes. */
 export const BANNED_RPC_FRAGMENT = "zksync-os-testnet-genlayer.zksync.dev";
+
+export interface NetworkPreset {
+  key: string;
+  chainId: number;
+  name: string;
+  short: string;
+  rpcUrl: string;
+  explorer: string;
+  faucet: string;
+  /** genlayer-js chain export name for this network. */
+  chainExport: "testnetBradbury" | "studionet" | "testnetAsimov";
+}
+
+export const NETWORKS: Record<string, NetworkPreset> = {
+  bradbury: {
+    key: "bradbury",
+    chainId: 4221,
+    name: "GenLayer Testnet Bradbury",
+    short: "Bradbury",
+    rpcUrl: "https://rpc-bradbury.genlayer.com",
+    explorer: "https://explorer-bradbury.genlayer.com",
+    faucet: "https://testnet-faucet.genlayer.foundation",
+    chainExport: "testnetBradbury",
+  },
+  studionet: {
+    key: "studionet",
+    chainId: 61999,
+    name: "GenLayer Studio Network",
+    short: "Studionet",
+    rpcUrl: "https://studio.genlayer.com/api",
+    explorer: "https://explorer-studio.genlayer.com",
+    faucet: "https://studio.genlayer.com",
+    chainExport: "studionet",
+  },
+  asimov: {
+    key: "asimov",
+    chainId: 4221,
+    name: "GenLayer Testnet Asimov",
+    short: "Asimov",
+    rpcUrl: "https://rpc-asimov.genlayer.com",
+    explorer: "https://explorer-asimov.genlayer.com",
+    faucet: "https://testnet-faucet.genlayer.foundation",
+    chainExport: "testnetAsimov",
+  },
+};
+
+const DEFAULT_NETWORK = "bradbury";
 
 function read(key: string, fallback: string): string {
   const raw = import.meta.env[key as keyof ImportMetaEnv];
@@ -15,20 +60,31 @@ function read(key: string, fallback: string): string {
   return trimmed.length > 0 ? trimmed : fallback;
 }
 
-function normalizeRpc(url: string): string {
-  if (url.includes(BANNED_RPC_FRAGMENT)) return DEFAULT_RPC;
-  return url;
+function resolveNetwork(): NetworkPreset {
+  const requested = read("VITE_GENLAYER_NETWORK", DEFAULT_NETWORK).toLowerCase();
+  return NETWORKS[requested] ?? NETWORKS[DEFAULT_NETWORK];
+}
+
+export const network = resolveNetwork();
+
+function resolveRpc(preset: NetworkPreset): string {
+  const configured = read("VITE_GENLAYER_RPC_URL", preset.rpcUrl);
+  // Never let the rate-limited ChainList host through, however it got set.
+  return configured.includes(BANNED_RPC_FRAGMENT) ? preset.rpcUrl : configured;
 }
 
 export const env = {
   contractAddress: read("VITE_GROKMARKET_CONTRACT_ADDRESS", "") as `0x${string}` | "",
-  rpcUrl: normalizeRpc(read("VITE_GENLAYER_RPC_URL", DEFAULT_RPC)),
+  rpcUrl: resolveRpc(network),
   walletConnectProjectId: read("VITE_WALLETCONNECT_PROJECT_ID", ""),
-  defaultRpc: DEFAULT_RPC,
+  defaultRpc: network.rpcUrl,
 } as const;
 
-export const CHAIN_ID = 4221;
-export const EXPLORER = "https://explorer-bradbury.genlayer.com";
-export const FAUCET = "https://testnet-faucet.genlayer.foundation";
+export const CHAIN_ID = network.chainId;
+export const EXPLORER = network.explorer;
+export const FAUCET = network.faucet;
 
 export const isConfigured = env.contractAddress.length > 0;
+
+/** Bradbury is the only network with the -32005 ChainList RPC problem. */
+export const hasRpcHazard = network.key === "bradbury";
